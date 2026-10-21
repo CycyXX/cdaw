@@ -1,6 +1,7 @@
 #include "TimeRuler.h"
 #include "../LookAndFeel/Palette.h"
 #include "../../Model/TempoOps.h"
+#include "../../Model/ArrangerOps.h"
 
 namespace cdaw
 {
@@ -8,9 +9,14 @@ namespace cdaw
     {
         void forEachBar (const EditViewState& vs, double widthPx, const std::function<void (int, te::TimePosition)>& fn)
         {
+            forEachBar (vs, 0.0, widthPx, fn);
+        }
+
+        void forEachBar (const EditViewState& vs, double fromX, double toX, const std::function<void (int, te::TimePosition)>& fn)
+        {
             auto& ts = vs.edit.tempoSequence;
-            auto t0 = vs.xToTime (0.0);
-            auto t1 = vs.xToTime (widthPx);
+            auto t0 = vs.xToTime (juce::jmax (0.0, fromX));
+            auto t1 = vs.xToTime (toX);
 
             auto bar = ts.toBarsAndBeats (t0).bars;
 
@@ -25,6 +31,25 @@ namespace cdaw
             }
         }
 
+        double pixelsPerBar (const EditViewState& vs)
+        {
+            auto& ts = vs.edit.tempoSequence;
+            auto bar = ts.toBarsAndBeats (vs.xToTime (0.0)).bars;
+            auto t0 = ts.toTime (te::tempo::BarsAndBeats { bar, {} });
+            auto t1 = ts.toTime (te::tempo::BarsAndBeats { bar + 1, {} });
+            return vs.timeToX (t1) - vs.timeToX (t0);
+        }
+
+        int barStep (double pxPerBar, double minPixels)
+        {
+            int step = 1;
+
+            while (step < 4096 && pxPerBar * step < minPixels)
+                step *= 2;
+
+            return step;
+        }
+
         void drawGridLines (juce::Graphics& g, const EditViewState& vs, juce::Rectangle<int> area)
         {
             auto& ts = vs.edit.tempoSequence;
@@ -33,8 +58,34 @@ namespace cdaw
             const auto bottom = (float) area.getBottom();
             const auto grid = vs.getGrid();
 
-            forEachBar (vs, width, [&] (int, te::TimePosition barStart)
+            // Zoomed out: only every Nth bar gets a line, so the lanes don't turn into a solid grey wash.
+            const auto pxPerBar = pixelsPerBar (vs);
+            const int lineStep = barStep (pxPerBar, 16.0);
+            const int strongStep = barStep (pxPerBar, 48.0);
+
+            // Only the bars inside the area being repainted (e.g. a thin playhead strip).
+            auto dirty = g.getClipBounds().getIntersection (area);
+            if (dirty.isEmpty())
+                return;
+
+            const double fromX = dirty.getX() - area.getX() - 2.0;
+            const double toX = dirty.getRight() - area.getX() + 2.0;
+            juce::ignoreUnused (width);
+
+            forEachBar (vs, fromX, toX, [&] (int barNumber, te::TimePosition barStart)
             {
+                if (lineStep > 1)
+                {
+                    if ((barNumber - 1) % lineStep == 0)
+                    {
+                        const bool strong = (barNumber - 1) % strongStep == 0;
+                        g.setColour (strong ? Palette::gridBar : Palette::gridBeat);
+                        g.drawVerticalLine ((int) (area.getX() + vs.timeToX (barStart)), top, bottom);
+                    }
+
+                    return;
+                }
+
                 auto& sig = ts.getTimeSigAt (barStart);
                 const int num = juce::jmax (1, sig.numerator.get());
                 const int den = juce::jmax (1, sig.denominator.get());
@@ -73,11 +124,22 @@ namespace cdaw
                 }
             });
 
+            // Song section starts through the lanes, in the section's colour.
+            for (auto s : ArrangerOps::getSections (vs.edit))
+            {
+                auto x = (float) (area.getX() + vs.timeToX (s->getPosition().getStart()));
+                if (x >= dirty.getX() - 2 && x <= dirty.getRight() + 2)
+                {
+                    g.setColour (s->getColour().withAlpha (0.45f));
+                    g.fillRect (x - 0.5f, top, 2.0f, bottom - top);
+                }
+            }
+
             // Marker lines through the lanes
             for (auto m : vs.edit.getMarkerManager().getMarkers())
             {
                 auto x = (float) (area.getX() + vs.timeToX (m->getPosition().getStart()));
-                if (x >= area.getX() && x <= area.getRight())
+                if (x >= dirty.getX() - 2 && x <= dirty.getRight() + 2)
                 {
                     g.setColour (Palette::marker.withAlpha (0.35f));
                     g.drawVerticalLine ((int) x, top, bottom);
@@ -87,8 +149,26 @@ namespace cdaw
     }
 
     //==============================================================================
+    bool TimeRuler::affectsRuler (const juce::ValueTree& v, const juce::Identifier& id)
+    {
+        // What the ruler draws: markers, tempo and signature changes, the loop / punch range.
+        // (Scrolling and zooming are repainted by the arrange view; the play position by its playhead.)
+        if (v.hasType (te::IDs::TRANSPORT))
+            return id == te::IDs::loopPoint1 || id == te::IDs::loopPoint2 || id == te::IDs::looping;
+
+        if (id == te::IDs::recordPunchInOut)
+            return true;
+
+        for (auto t = v; t.isValid(); t = t.getParent())
+            if (t.hasType (te::IDs::MARKERCLIP) || t.hasType (te::IDs::MARKERTRACK) || t.hasType (te::IDs::TEMPOSEQUENCE))
+                return true;
+
+        return false;
+    }
+
     TimeRuler::TimeRuler (EditViewState& vs) : viewState (vs), edit (vs.edit)
     {
+        setOpaque (true);   // paint() fills the whole component
         edit.state.addListener (this);
         setMouseCursor (juce::MouseCursor::IBeamCursor);
     }
@@ -129,10 +209,25 @@ namespace cdaw
         return items;
     }
 
+    const std::vector<TimeRuler::Item>& TimeRuler::getItems() const
+    {
+        // Rebuild when markers / tempo / signatures changed, or the view scrolled, zoomed or resized.
+        if (itemsDirty || cachedViewStart != viewState.viewStart.get() || cachedZoom != viewState.pixelsPerSecond.get()
+             || cachedWidth != getWidth())
+        {
+            itemCache = layoutItems();
+            itemsDirty = false;
+            cachedViewStart = viewState.viewStart.get();
+            cachedZoom = viewState.pixelsPerSecond.get();
+            cachedWidth = getWidth();
+        }
+
+        return itemCache;
+    }
+
     const TimeRuler::Item* TimeRuler::itemAt (juce::Point<int> p) const
     {
-        static std::vector<Item> cache;
-        cache = layoutItems();
+        auto& cache = getItems();
 
         for (auto it = cache.rbegin(); it != cache.rend(); ++it)
             if (it->bounds.contains (p))
@@ -152,7 +247,7 @@ namespace cdaw
         g.fillRect (0, 0, getWidth(), markerZoneHeight);
         g.setFont (juce::FontOptions (11.0f));
 
-        for (auto& item : layoutItems())
+        for (auto& item : getItems())
         {
             auto colour = item.kind == Item::Kind::marker ? Palette::marker : Palette::tempo;
             juce::String text;
@@ -189,36 +284,63 @@ namespace cdaw
             g.drawVerticalLine ((int) x2, (float) loopTop, (float) getHeight());
         }
 
-        // Bar numbers and ticks
+        // Bar numbers and ticks. When zoomed out, labelled bars (1, 5, 9 ... or 1, 9, 17 ...) get a
+        // full-height line, a few in-between bars get a short tick, and the rest are skipped.
         g.setFont (juce::FontOptions (12.0f));
+        const auto pxPerBar = GridPainter::pixelsPerBar (viewState);
+        const int labelStep = GridPainter::barStep (pxPerBar, 44.0);
+        const int tickStep = GridPainter::barStep (pxPerBar, 7.0);
+        const auto rulerH = (float) (getHeight() - barsTop);
         int lastLabelX = -1000;
 
-        GridPainter::forEachBar (viewState, getWidth(), [&] (int barNumber, te::TimePosition t)
+        // Bars inside the repainted area, plus a margin so label spacing matches a full paint.
+        auto dirty = g.getClipBounds();
+        GridPainter::forEachBar (viewState, dirty.getX() - 80.0, dirty.getRight() + 4.0, [&] (int barNumber, te::TimePosition t)
         {
-            auto x = (int) viewState.timeToX (t);
-            auto num = juce::jmax (1, ts.getTimeSigAt (t).numerator.get());
-            auto barBeats = ts.toBeats (t);
-            auto nextBeatX = viewState.timeToX (ts.toTime (barBeats + te::BeatDuration::fromBeats (1.0)));
-            auto pxPerBeat = nextBeatX - x;
+            const int index = barNumber - 1;
 
-            if (pxPerBeat * num < 3.0)
+            if (index % tickStep != 0)
                 return;
 
-            g.setColour (Palette::textDim);
-            g.drawVerticalLine (x, (float) barsTop, (float) getHeight());
+            auto x = (int) viewState.timeToX (t);
+            const bool labelled = index % labelStep == 0;
 
-            if (pxPerBeat > 8.0)
-                for (int b = 1; b < num; ++b)
-                {
-                    auto bx = (int) viewState.timeToX (ts.toTime (barBeats + te::BeatDuration::fromBeats ((double) b)));
-                    g.drawVerticalLine (bx, getHeight() - 5.0f, (float) getHeight());
-                }
-
-            if (x - lastLabelX > 34)
+            if (labelled)
             {
-                g.setColour (Palette::text);
-                g.drawText (juce::String (barNumber), x + 3, barsTop, 40, getHeight() - barsTop, juce::Justification::centredLeft, false);
-                lastLabelX = x;
+                g.setColour (Palette::textDim);
+                g.drawVerticalLine (x, (float) barsTop, (float) getHeight());
+
+                if (x - lastLabelX > 30)
+                {
+                    g.setColour (Palette::text);
+                    g.drawText (juce::String (barNumber), x + 3, barsTop, 44, getHeight() - barsTop - 4, juce::Justification::centredLeft, false);
+                    lastLabelX = x;
+                }
+            }
+            else
+            {
+                // Halfway marks between labels are a bit longer than the rest.
+                const bool half = labelStep >= 2 && index % (labelStep / 2) == 0;
+                g.setColour (Palette::textDim.withAlpha (half ? 0.8f : 0.45f));
+                g.drawVerticalLine (x, (float) getHeight() - rulerH * (half ? 0.45f : 0.25f), (float) getHeight());
+            }
+
+            // Beat ticks only when there's room for them.
+            if (labelStep == 1)
+            {
+                auto num = juce::jmax (1, ts.getTimeSigAt (t).numerator.get());
+                auto barBeats = ts.toBeats (t);
+                auto pxPerBeat = pxPerBar / num;
+
+                if (pxPerBeat > 8.0)
+                {
+                    g.setColour (Palette::textDim.withAlpha (0.6f));
+                    for (int b = 1; b < num; ++b)
+                    {
+                        auto bx = (int) viewState.timeToX (ts.toTime (barBeats + te::BeatDuration::fromBeats ((double) b)));
+                        g.drawVerticalLine (bx, getHeight() - 5.0f, (float) getHeight());
+                    }
+                }
             }
         });
 

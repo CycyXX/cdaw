@@ -52,6 +52,35 @@ namespace cdaw
             }
         }
 
+        /** Area currently drawn by ghosts, rubber band and drop marker. */
+        juce::Rectangle<int> getDrawnArea() const
+        {
+            juce::Rectangle<int> r;
+
+            for (auto& g : ghosts)
+                r = r.getUnion (g.expanded (2));
+
+            if (! rubberBand.isEmpty())
+                r = r.getUnion (rubberBand.expanded (2));
+
+            if (dropX >= 0)
+                r = r.getUnion ({ dropX - 2, 0, 124, getHeight() });
+
+            return r;
+        }
+
+        /** Applies a change to the drawn items and repaints only what moved (old area + new area). */
+        template <typename Fn>
+        void change (Fn&& fn)
+        {
+            auto before = getDrawnArea();
+            fn();
+            auto dirty = before.getUnion (getDrawnArea());
+
+            if (! dirty.isEmpty())
+                repaint (dirty);
+        }
+
         ArrangeView& owner;
         juce::Array<juce::Rectangle<int>> ghosts;
         juce::Rectangle<int> rubberBand;
@@ -62,7 +91,7 @@ namespace cdaw
     /** Background below the last track: click deselects, double-click adds a track. */
     struct ArrangeView::EmptyArea : public juce::Component
     {
-        explicit EmptyArea (ArrangeView& o) : owner (o) {}
+        explicit EmptyArea (ArrangeView& o) : owner (o)    { setOpaque (true); }
 
         void paint (juce::Graphics& g) override
         {
@@ -110,8 +139,12 @@ namespace cdaw
     {
         emptyArea = std::make_unique<EmptyArea> (*this);
         overlay = std::make_unique<Overlay> (*this);
+        arranger = std::make_unique<ArrangerLane> (viewState, headerWidth);
+        arranger->onSectionsChanged = [this] { lanesArea.repaint(); };
 
         addAndMakeVisible (ruler);
+        addChildComponent (*arranger);
+        arranger->setVisible (isArrangerShown());
         addAndMakeVisible (headersArea);
         addAndMakeVisible (lanesArea);
         lanesArea.addAndMakeVisible (*emptyArea);
@@ -229,14 +262,30 @@ namespace cdaw
         hScroll.setCurrentRange (viewState.viewStart.get(), visibleSecs, juce::dontSendNotification);
     }
 
+    bool ArrangeView::isArrangerShown() const
+    {
+        return (bool) viewState.state.getProperty (ViewIDs::showArranger, true);
+    }
+
+    void ArrangeView::setArrangerShown (bool shown)
+    {
+        viewState.state.setProperty (ViewIDs::showArranger, shown, nullptr);
+        arranger->setVisible (shown);
+        resized();
+    }
+
     void ArrangeView::resized()
     {
         auto r = getLocalBounds();
+        const int arrangerH = arranger->isVisible() ? ArrangerLane::height : 0;
         hScroll.setBounds (r.removeFromBottom (scrollBarSize).withTrimmedLeft (headerWidth).withTrimmedRight (scrollBarSize));
-        vScroll.setBounds (r.removeFromRight (scrollBarSize).withTrimmedTop (rulerHeight));
+        vScroll.setBounds (r.removeFromRight (scrollBarSize).withTrimmedTop (rulerHeight + arrangerH));
 
         auto top = r.removeFromTop (rulerHeight);
         ruler.setBounds (top.withTrimmedLeft (headerWidth));
+
+        if (arrangerH > 0)
+            arranger->setBounds (r.removeFromTop (arrangerH));
 
         headersArea.setBounds (r.removeFromLeft (headerWidth));
         lanesArea.setBounds (r);
@@ -433,29 +482,29 @@ namespace cdaw
         dragTrackDelta = (idx >= 0 && dragStartTrackIndex >= 0) ? idx - dragStartTrackIndex : dragTrackDelta;
         dragCopy = e.mods.isAltDown();
 
-        overlay->ghosts.clear();
-
-        for (int i = 0; i < dragClips.size(); ++i)
+        overlay->change ([&]
         {
-            auto range = dragOriginalRanges[i] + dragDelta;
-            auto row = juce::jlimit (0, lanes.size() - 1, dragOriginalTrackIndex[i] + dragTrackDelta);
+            overlay->ghosts.clear();
 
-            if (! juce::isPositiveAndBelow (row, lanes.size()))
-                continue;
+            for (int i = 0; i < dragClips.size(); ++i)
+            {
+                auto range = dragOriginalRanges[i] + dragDelta;
+                auto row = juce::jlimit (0, lanes.size() - 1, dragOriginalTrackIndex[i] + dragTrackDelta);
 
-            auto* lane = lanes[row];
-            auto x1 = (int) viewState.timeToX (range.getStart());
-            auto x2 = (int) viewState.timeToX (range.getEnd());
-            overlay->ghosts.add (juce::Rectangle<int> (x1, lane->getY() + 1, juce::jmax (2, x2 - x1), lane->getHeight() - 2));
-        }
+                if (! juce::isPositiveAndBelow (row, lanes.size()))
+                    continue;
 
-        overlay->repaint();
+                auto* lane = lanes[row];
+                auto x1 = (int) viewState.timeToX (range.getStart());
+                auto x2 = (int) viewState.timeToX (range.getEnd());
+                overlay->ghosts.add (juce::Rectangle<int> (x1, lane->getY() + 1, juce::jmax (2, x2 - x1), lane->getHeight() - 2));
+            }
+        });
     }
 
     void ArrangeView::endClipDrag (const juce::MouseEvent& e)
     {
-        overlay->ghosts.clear();
-        overlay->repaint();
+        overlay->change ([this] { overlay->ghosts.clear(); });
 
         if (! dragClips.isEmpty() && e.mouseWasDraggedSinceMouseDown()
              && (dragDelta != te::TimeDuration() || dragTrackDelta != 0))
@@ -533,8 +582,7 @@ namespace cdaw
             case LaneDrag::rubberBand:
             {
                 auto r = juce::Rectangle<int> (laneDragStart, e.getPosition()).translated (-lanesArea.getX(), -lanesArea.getY());
-                overlay->rubberBand = r;
-                overlay->repaint();
+                overlay->change ([&] { overlay->rubberBand = r; });
                 break;
             }
 
@@ -545,9 +593,11 @@ namespace cdaw
                 if (lane >= 0)
                 {
                     auto x1 = (int) viewState.timeToX (a), x2 = (int) viewState.timeToX (b);
-                    overlay->ghosts.clearQuick();
-                    overlay->ghosts.add (juce::Rectangle<int> (x1, lanes[lane]->getY() + 1, juce::jmax (2, x2 - x1), lanes[lane]->getHeight() - 2));
-                    overlay->repaint();
+                    overlay->change ([&]
+                    {
+                        overlay->ghosts.clearQuick();
+                        overlay->ghosts.add (juce::Rectangle<int> (x1, lanes[lane]->getY() + 1, juce::jmax (2, x2 - x1), lanes[lane]->getHeight() - 2));
+                    });
                 }
                 break;
             }
@@ -619,9 +669,11 @@ namespace cdaw
             }
         }
 
-        overlay->rubberBand = {};
-        overlay->ghosts.clear();
-        overlay->repaint();
+        overlay->change ([this]
+        {
+            overlay->rubberBand = {};
+            overlay->ghosts.clear();
+        });
         laneDrag = LaneDrag::none;
         laneDragTrack = nullptr;
     }
@@ -657,9 +709,14 @@ namespace cdaw
 
         juce::PopupMenu m;
 
-        if (dynamic_cast<te::MidiClip*> (&clip) != nullptr)
+        if (auto mc = dynamic_cast<te::MidiClip*> (&clip))
         {
             m.addItem ("Open in Editor", [this, clipPtr] { openClipEditor (*clipPtr); });
+            m.addItem ("Loop Clip (repeat when extended)", true, mc->isLooping(), [clipPtr, um]
+            {
+                um->beginNewTransaction ("Loop clip");
+                ClipOps::setLooping (*clipPtr, ! clipPtr->isLooping());
+            });
             m.addSeparator();
         }
 
@@ -742,8 +799,57 @@ namespace cdaw
 
         if (auto ac = dynamic_cast<te::AudioClipBase*> (&clip))
         {
-            juce::ignoreUnused (ac);
             m.addSeparator();
+            m.addItem (clips.size() > 1 ? "Crossfade Selected Clips" : "Crossfade with Touching Clips", [this, clips, um]
+            {
+                um->beginNewTransaction ("Crossfade");
+                auto made = ClipOps::crossfadeClips (clips, te::TimeDuration::fromSeconds (ClipOps::defaultCrossfadeSeconds));
+                edit.engine.getUIBehaviour().showInfoMessage (made > 0 ? "Crossfaded " + juce::String (made) + " join(s) - drag the fade handles to lengthen"
+                                                                       : "No touching clips to crossfade");
+            });
+
+            juce::PopupMenu gain;
+            for (float db : { 6.0f, 3.0f, 1.0f, -1.0f, -3.0f, -6.0f })
+                gain.addItem ((db > 0 ? "+" : "") + juce::String ((int) db) + " dB", [clips, db, um]
+                {
+                    um->beginNewTransaction ("Clip gain");
+                    for (auto c : clips)
+                        if (auto a = dynamic_cast<te::AudioClipBase*> (c))
+                            a->setGainDB (juce::jlimit (-48.0f, 12.0f, a->getGainDB() + db));
+                });
+            gain.addSeparator();
+            gain.addItem ("Reset to 0 dB", [clips, um]
+            {
+                um->beginNewTransaction ("Reset clip gain");
+                for (auto c : clips)
+                    if (auto a = dynamic_cast<te::AudioClipBase*> (c))
+                        a->setGainDB (0.0f);
+            });
+            m.addSubMenu ("Clip Gain (now " + juce::String (ac->getGainDB(), 1) + " dB)", gain);
+
+            for (bool fadeIn : { true, false })
+            {
+                juce::PopupMenu shapes;
+                auto current = fadeIn ? ac->getFadeInType() : ac->getFadeOutType();
+
+                for (auto [type, name] : { std::pair { te::AudioFadeCurve::linear,  "Linear" },
+                                           std::pair { te::AudioFadeCurve::convex,  "Convex (equal power)" },
+                                           std::pair { te::AudioFadeCurve::concave, "Concave" },
+                                           std::pair { te::AudioFadeCurve::sCurve,  "S-Curve" } })
+                    shapes.addItem (name, true, current == type, [clips, fadeIn, type = type, um]
+                    {
+                        um->beginNewTransaction ("Fade shape");
+                        for (auto c : clips)
+                            if (auto a = dynamic_cast<te::AudioClipBase*> (c))
+                            {
+                                if (fadeIn) a->setFadeInType (type);
+                                else        a->setFadeOutType (type);
+                            }
+                    });
+
+                m.addSubMenu (fadeIn ? "Fade In Shape" : "Fade Out Shape", shapes);
+            }
+
             m.addItem ("Reverse", [clips, um]
             {
                 um->beginNewTransaction ("Reverse");
@@ -914,16 +1020,18 @@ namespace cdaw
     void ArrangeView::fileDragMove (const juce::StringArray&, int x, int y)
     {
         auto t = viewState.snap (viewState.xToTime (x - lanesArea.getX()));
-        overlay->dropX = (int) viewState.timeToX (t);
         auto idx = getTrackIndexAt (y);
-        overlay->dropY = idx >= 0 ? lanes[idx]->getY() : -1;
-        overlay->repaint();
+
+        overlay->change ([&]
+        {
+            overlay->dropX = (int) viewState.timeToX (t);
+            overlay->dropY = idx >= 0 ? lanes[idx]->getY() : -1;
+        });
     }
 
     void ArrangeView::fileDragExit (const juce::StringArray&)
     {
-        overlay->dropX = overlay->dropY = -1;
-        overlay->repaint();
+        overlay->change ([this] { overlay->dropX = overlay->dropY = -1; });
     }
 
     void ArrangeView::filesDropped (const juce::StringArray& files, int x, int y)
@@ -977,16 +1085,16 @@ namespace cdaw
                 lastPlayheadX = -1e9;
                 updateScrollBars();
                 ruler.repaint();
+                arranger->repaint();
                 overlay->repaint();
             }
             else if (id == ViewIDs::scrollY)
             {
                 markAndUpdate (needsLayout);
             }
-            else if (id == ViewIDs::rangeStart || id == ViewIDs::rangeEnd)
+            else if (id == ViewIDs::snapEnabled || id == ViewIDs::gridIndex)
             {
-                for (auto l : lanes)
-                    l->repaint();
+                arranger->repaint();
             }
 
             return;
@@ -1000,10 +1108,6 @@ namespace cdaw
                 markAndUpdate (needsRebuild);
             else if (id == te::IDs::colour || id == te::IDs::name)
                 repaint();
-        }
-        else if (v.hasType (te::IDs::TRANSPORT) || id == te::IDs::recordPunchInOut)
-        {
-            ruler.repaint();
         }
     }
 
@@ -1027,8 +1131,7 @@ namespace cdaw
 
     void ArrangeView::changeListenerCallback (juce::ChangeBroadcaster*)
     {
-        for (auto l : lanes)
-            l->repaint();
+        // Lanes, headers and clips repaint themselves when their own selected state changes.
     }
 
     void ArrangeView::handleAsyncUpdate()

@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>CDAW</title>
+  <defs>
+    <radialGradient id="disc" cx="50%" cy="50%" r="50%">
+      <stop offset="0.15" stop-color="#2c3036"/>
+      <stop offset="1" stop-color="#1b1d21"/>
+    </radialGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4fd6c8"/>
+      <stop offset="0.5" stop-color="#4fa3ff"/>
+      <stop offset="1" stop-color="#d77cff"/>
+    </linearGradient>
+    <clipPath id="face"><circle cx="256" cy="256" r="240"/></clipPath>
+    <mask id="ring">
+      <rect width="512" height="512" fill="#fff"/>
+      <circle cx="256" cy="256" r="46" fill="#000"/>
+    </mask>
+  </defs>
+
+  <!-- disc body -->
+  <circle cx="256" cy="256" r="244" fill="#3a3f47"/>
+  <circle cx="256" cy="256" r="240" fill="url(#disc)"/>
+
+  <!-- light-refraction sheen: two opposing wedges, like light on a CD surface -->
+  <g clip-path="url(#face)" mask="url(#ring)" opacity="0.28">
+    <polygon points="256,256 520,60 520,200" fill="#4fa3ff"/>
+    <polygon points="256,256 520,200 520,330" fill="#d77cff"/>
+    <polygon points="256,256 -8,452 -8,312" fill="#4fd6c8"/>
+    <polygon points="256,256 -8,312 -8,182" fill="#ffb84f"/>
+  </g>
+
+  <!-- data-track grooves -->
+  <g fill="none" stroke="#fff" stroke-opacity="0.07" stroke-width="2">
+    <circle cx="256" cy="256" r="228"/>
+    <circle cx="256" cy="256" r="212"/>
+    <circle cx="256" cy="256" r="196"/>
+    <circle cx="256" cy="256" r="180"/>
+    <circle cx="256" cy="256" r="164"/>
+    <circle cx="256" cy="256" r="148"/>
+    <circle cx="256" cy="256" r="132"/>
+    <circle cx="256" cy="256" r="116"/>
+    <circle cx="256" cy="256" r="100"/>
+  </g>
+
+  <!-- waveform running through the disc -->
+  <g fill="url(#wave)" stroke="none">
+    <rect x="76"  y="236" width="10" height="40"  rx="5"/>
+    <rect x="94"  y="206" width="10" height="100" rx="5"/>
+    <rect x="112" y="176" width="10" height="160" rx="5"/>
+    <rect x="130" y="216" width="10" height="80"  rx="5"/>
+    <rect x="148" y="156" width="10" height="200" rx="5"/>
+    <rect x="166" y="196" width="10" height="120" rx="5"/>
+    <rect x="184" y="226" width="10" height="60"  rx="5"/>
+
+    <rect x="318" y="226" width="10" height="60"  rx="5"/>
+    <rect x="336" y="186" width="10" height="140" rx="5"/>
+    <rect x="354" y="146" width="10" height="220" rx="5"/>
+    <rect x="372" y="196" width="10" height="120" rx="5"/>
+    <rect x="390" y="216" width="10" height="80"  rx="5"/>
+    <rect x="408" y="236" width="10" height="40"  rx="5"/>
+    <rect x="426" y="246" width="10" height="20"  rx="5"/>
+  </g>
+
+  <!-- hub: clear inner ring, hole, and a playhead-red centre mark -->
+  <circle cx="256" cy="256" r="58" fill="#23262b" stroke="#3a3f47" stroke-width="4"/>
+  <circle cx="256" cy="256" r="44" fill="#1b1d21"/>
+  <circle cx="256" cy="256" r="18" fill="#ff5a4f"/>
+  <circle cx="256" cy="256" r="7" fill="#1b1d21"/>
+</svg>

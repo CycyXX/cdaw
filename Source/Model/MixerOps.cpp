@@ -208,4 +208,73 @@ namespace cdaw::MixerOps
 
         return secs * 1000.0;
     }
+
+    //==============================================================================
+    bool canSidechain (te::Plugin& plugin)
+    {
+        return ! plugin.isMissing() && plugin.canSidechain();
+    }
+
+    juce::Array<te::AudioTrack*> getSidechainSources (te::Plugin& plugin)
+    {
+        juce::Array<te::AudioTrack*> sources;
+
+        for (auto at : te::getAudioTracks (plugin.edit))
+            if (at != plugin.getOwnerTrack())
+                sources.add (at);
+
+        return sources;
+    }
+
+    te::AudioTrack* getSidechainSource (te::Plugin& plugin)
+    {
+        auto id = plugin.getSidechainSourceID();
+        return id.isValid() ? te::findAudioTrackForID (plugin.edit, id) : nullptr;
+    }
+
+    void setSidechainSource (te::Plugin& plugin, te::AudioTrack* source)
+    {
+        if (source != nullptr)
+        {
+            plugin.setSidechainSourceID (source->itemID);
+
+            // Main inputs from the track, sidechain inputs from the source.
+            if (plugin.getNumWires() == 0)
+                plugin.guessSidechainRouting();
+        }
+        else
+        {
+            plugin.setSidechainSourceID ({});
+        }
+
+        if (auto comp = dynamic_cast<te::CompressorPlugin*> (&plugin))
+            comp->useSidechainTrigger = source != nullptr;
+    }
+
+    juce::PopupMenu createSidechainMenu (te::Plugin& plugin)
+    {
+        juce::PopupMenu m;
+        te::Plugin::Ptr p = &plugin;
+        auto* current = getSidechainSource (plugin);
+        auto* um = &plugin.edit.getUndoManager();
+
+        m.addItem ("Off", true, current == nullptr, [p, um]
+        {
+            um->beginNewTransaction ("Sidechain off");
+            setSidechainSource (*p, nullptr);
+        });
+        m.addSeparator();
+
+        for (auto at : getSidechainSources (plugin))
+        {
+            te::Track::Ptr src = at;
+            m.addItem (at->getName(), true, at == current, [p, src, um]
+            {
+                um->beginNewTransaction ("Set sidechain");
+                setSidechainSource (*p, dynamic_cast<te::AudioTrack*> (src.get()));
+            });
+        }
+
+        return m;
+    }
 }

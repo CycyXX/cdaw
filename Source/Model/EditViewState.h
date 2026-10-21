@@ -24,17 +24,23 @@ namespace cdaw
         CDAW_DECLARE_ID (cdawType)
         CDAW_DECLARE_ID (cdawDrumMap)
         CDAW_DECLARE_ID (cdawCollapsed)
+        CDAW_DECLARE_ID (showSpectrum)
+        CDAW_DECLARE_ID (showArranger)
         #undef CDAW_DECLARE_ID
     }
 
     enum class Tool { select = 0, range, split, draw, erase, mute, glue };
 
+    class MasterAnalyser;
+
     /** A musical grid value. */
     struct GridDivision
     {
         juce::String name;
-        double wholeNotes = 0.25;   // length as fraction of a whole note; <= 0 means "bar"
+        double wholeNotes = 0.25;   // length as fraction of a whole note; <= 0 means whole bars
         bool triplet = false;
+        int bars = 1;               // for bar grids: snap to every N bars
+        bool adaptive = false;      // follows the zoom level
     };
 
     /** View state for one Edit (zoom, scroll, grid, tool, cursor), stored in the Edit's
@@ -48,6 +54,9 @@ namespace cdaw
         te::SelectionManager& selectionManager;
         juce::ValueTree state;
 
+        /** The project's master output analyser (owned by ProjectSession; null in tests that don't make one). */
+        MasterAnalyser* analyser = nullptr;
+
         juce::CachedValue<double> viewStart, pixelsPerSecond, cursorPos, rangeStart, rangeEnd;
         juce::CachedValue<int> scrollY, gridIndex, tool;
         juce::CachedValue<bool> snapEnabled, followPlayhead;
@@ -60,7 +69,11 @@ namespace cdaw
 
         // Grid / snapping
         static const juce::Array<GridDivision>& getGridDivisions();
-        GridDivision getGrid() const;
+        GridDivision getGrid() const;                                   // resolves "Adaptive" for the arrangement zoom
+        GridDivision resolveGrid (double pixelsPerBeat) const;          // resolves "Adaptive" for any zoom (piano roll)
+        bool isAdaptiveGrid() const;
+        static int getAdaptiveGridIndex();
+        static int findGridIndex (const juce::String& name);
         te::TimePosition snap (te::TimePosition) const;                 // honours snapEnabled
         te::TimePosition snapAlways (te::TimePosition) const;           // ignores snapEnabled
         te::TimeDuration getGridDuration (te::TimePosition at) const;

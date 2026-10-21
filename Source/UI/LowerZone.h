@@ -31,6 +31,7 @@ namespace cdaw
 
         std::function<void (int newHeight)> onResizeRequest;
         std::function<void()> onClose;
+        std::function<void (te::Track&)> onTrackMenu;
 
         static constexpr int tabBarHeight = 26;
 

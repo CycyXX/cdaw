@@ -23,7 +23,7 @@ namespace cdaw
         }
 
         addKeyListener (AppContext::get().commandManager.getKeyMappings());
-        setVisible (true);
+        // Shown by the application once the startup project has loaded.
     }
 
     MainWindow::~MainWindow()

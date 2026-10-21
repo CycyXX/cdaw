@@ -13,6 +13,9 @@ namespace cdaw
         explicit CDAWEngineBehaviour (AppSettings&);
 
         bool canScanPluginsOutOfProcess() override                      { return true; }
+        // CDAW registers its own (filtered) device types and initialises the devices itself.
+        bool addSystemAudioIODeviceTypes() override                     { return false; }
+        bool autoInitialiseDeviceManager() override                     { return false; }
         te::EditLimits getEditLimits() override;
         int getMiddleCOctave() override;
         void setMiddleCOctave (int) override;
@@ -21,6 +24,13 @@ namespace cdaw
         void setPluginDisabled (const juce::String& pluginID, bool shouldBeDisabled) override;
         bool autoAddClipEdgeFades() override                            { return true; }
         int getNumberOfCPUsToUseForAudio() override;
+
+        /** Raises the process to high priority while playing or recording (Tracktion calls this).
+            Never the Windows "realtime" class, which can starve input and the system. */
+        void setProcessPriority (int level) override
+        {
+            juce::Process::setPriority (level > 0 ? juce::Process::HighPriority : juce::Process::NormalPriority);
+        }
         void newClipCreated (te::Clip&, bool fromRecording) override;
         void editHasBeenSaved (te::Edit&, juce::File) override;
         ControlSurfaces getDesiredControlSurfaces() override;

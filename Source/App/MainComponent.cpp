@@ -3,6 +3,7 @@
 #include "../Commands/CommandIDs.h"
 #include "../Engine/AudioDeviceSetup.h"
 #include "../Model/ClipOps.h"
+#include "../Model/DawProject.h"
 #include "../Model/ProjectSession.h"
 #include "../Model/TrackOps.h"
 #include "../UI/Arrange/ArrangeView.h"
@@ -53,7 +54,7 @@ namespace cdaw
 
         ctx.commandManager.getKeyMappings()->addChangeListener (this);
         setWantsKeyboardFocus (true);
-        lowerZoneHeight = ctx.settings.getInt (SettingKeys::lowerZoneHeight, 360);
+        lowerZoneHeight = ctx.settings.getInt (SettingKeys::lowerZoneHeight, 460);
 
         sessionChanged();
         setSize (1500, 900);
@@ -153,14 +154,25 @@ namespace cdaw
 
             inspector = std::make_unique<InspectorPanel> (s->getViewState());
             lowerZone = std::make_unique<LowerZone> (s->getViewState());
-            lowerZone->onResizeRequest = [this] (int h) { lowerZoneHeight = h; resized(); };
+            lowerZone->onResizeRequest = [this] (int h)
+            {
+                lowerZoneHeight = h;
+                AppContext::get().settings.setInt (SettingKeys::lowerZoneHeight, lowerZoneHeight);
+                resized();
+            };
             lowerZone->onClose = [this] { setLowerZoneVisible (false, -1); };
+            lowerZone->onTrackMenu = [this] (te::Track& t) { if (arrangeView) arrangeView->showTrackMenu (t); };
             inspector->onDrumMapChanged = [this] (te::Track& t) { if (lowerZone) lowerZone->drumMapChanged (t); };
             addChildComponent (*lowerZone);
 
             addAndMakeVisible (*transportBar);
             addAndMakeVisible (*arrangeView);
             addAndMakeVisible (*inspector);
+
+            // Bottom panel: the mixer is open by default; remember the last choice.
+            auto& settings = AppContext::get().settings;
+            showLowerZone = settings.getBool (SettingKeys::lowerZoneVisible, true);
+            lowerZone->showPage ((LowerZone::Page) settings.getInt (SettingKeys::lowerZonePage, (int) LowerZone::Page::mixer));
         }
         else
         {
@@ -233,6 +245,7 @@ namespace cdaw
         lowerZone.reset();
         arrangeView.reset();
         transportBar.reset();
+        ClipOps::cancelRunningImport();
         ctx.session.reset();
 
         auto session = std::make_unique<ProjectSession> (ctx.engine(), editFile, recoverFrom);
@@ -246,8 +259,12 @@ namespace cdaw
         }
         else
         {
+            // An old .tracktionedit continues as <Name>.cdaw, so remember the new file.
+            if (session->getEditFile() != editFile)
+                ctx.settings.removeRecentProject (editFile);
+
             ctx.session = std::move (session);
-            ctx.settings.addRecentProject (editFile);
+            ctx.settings.addRecentProject (ctx.session->getEditFile());
             statusBar->showMessage ("Opened " + editFile.getFullPathName());
             juce::Logger::writeToLog ("Opened project " + editFile.getFullPathName());
         }
@@ -316,7 +333,7 @@ namespace cdaw
 
             auto& ctx = AppContext::get();
             chooser = std::make_unique<juce::FileChooser> ("Open Project", ctx.settings.getProjectsFolder(),
-                                                           "*" + juce::String (te::editFileSuffix));
+                                                           ProjectSession::getProjectFilePattern());
             chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                                   [this] (const juce::FileChooser& fc)
                                   {
@@ -347,7 +364,7 @@ namespace cdaw
         auto& ctx = AppContext::get();
         chooser = std::make_unique<juce::FileChooser> ("Save Project As (choose a new project name)",
                                                        ctx.settings.getProjectsFolder().getChildFile (s->getName() + " copy"),
-                                                       "*" + juce::String (te::editFileSuffix));
+                                                       "*" + juce::String (ProjectSession::projectFileSuffix));
         chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
                               [this, onDone] (const juce::FileChooser& fc)
                               {
@@ -454,6 +471,88 @@ namespace cdaw
             auto ok = ExportService::exportMidi (sess->getEdit(), clips, dest.withFileExtension (".mid"));
             statusBar->showMessage (ok ? "Exported " + dest.getFileName() + (clips.isEmpty() ? " (all MIDI clips)" : " (selected clips)")
                                        : juce::String ("No MIDI clips to export"));
+        });
+    }
+
+    static void showDawProjectReport (juce::Component* parent, const juce::String& title, const DawProject::Report& report)
+    {
+        juce::AlertWindow::showMessageBoxAsync (report.notes.isEmpty() ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon,
+                                                title, report.summary(), "OK", parent);
+    }
+
+    void MainComponent::importDawProjectDialog()
+    {
+        confirmDiscardOrSave ([this] (bool ok)
+        {
+            if (! ok)
+                return;
+
+            chooser = std::make_unique<juce::FileChooser> ("Import DAWproject", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
+                                                           "*" + juce::String (DawProject::fileExtension));
+            chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                  [this] (const juce::FileChooser& fc)
+            {
+                auto source = fc.getResult();
+                if (! source.existsAsFile())
+                    return;
+
+                // A new CDAW project next to the others, named after the file.
+                auto& ctx = AppContext::get();
+                ctx.settings.getProjectsFolder().createDirectory();
+                auto file = ProjectSession::createProjectFolder (ctx.settings.getProjectsFolder(), source.getFileNameWithoutExtension());
+                openProject (file);
+
+                auto* sess = getSession();
+                if (sess == nullptr)
+                    return;
+
+                DawProject::Report report;
+                auto result = DawProject::importInto (sess->getEdit(), source, sess->getAudioFolder().getChildFile ("Imported"), report);
+                sess->getEdit().getUndoManager().clearUndoHistory();
+                sess->save();
+                updateTitle();
+
+                if (result.failed())
+                {
+                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Import DAWproject", result.getErrorMessage(), "OK", this);
+                    return;
+                }
+
+                statusBar->showMessage ("Imported " + source.getFileName() + " as " + file.getFullPathName());
+                showDawProjectReport (this, "Imported " + source.getFileName(), report);
+            });
+        });
+    }
+
+    void MainComponent::exportDawProjectDialog()
+    {
+        auto* s = getSession();
+        if (s == nullptr)
+            return;
+
+        chooser = std::make_unique<juce::FileChooser> ("Export DAWproject", s->getProjectFolder().getChildFile (s->getName() + DawProject::fileExtension),
+                                                       "*" + juce::String (DawProject::fileExtension));
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [this] (const juce::FileChooser& fc)
+        {
+            auto* sess = getSession();
+            auto dest = fc.getResult();
+
+            if (sess == nullptr || dest == juce::File())
+                return;
+
+            dest = dest.withFileExtension (DawProject::fileExtension);
+            DawProject::Report report;
+            auto result = DawProject::exportTo (sess->getEdit(), dest, report);
+
+            if (result.failed())
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Export DAWproject", result.getErrorMessage(), "OK", this);
+                return;
+            }
+
+            statusBar->showMessage ("Exported " + dest.getFullPathName());
+            showDawProjectReport (this, "Exported " + dest.getFileName(), report);
         });
     }
 
@@ -576,7 +675,11 @@ namespace cdaw
         if (showLowerZone && page >= 0)
             lowerZone->showPage ((LowerZone::Page) page);
 
-        AppContext::get().settings.setInt (SettingKeys::lowerZoneHeight, lowerZoneHeight);
+        auto& settings = AppContext::get().settings;
+        settings.setInt (SettingKeys::lowerZoneHeight, lowerZoneHeight);
+        settings.setBool (SettingKeys::lowerZoneVisible, showLowerZone);
+        if (lowerZone != nullptr)
+            settings.setInt (SettingKeys::lowerZonePage, (int) lowerZone->getPage());
         resized();
     }
 
@@ -616,8 +719,8 @@ namespace cdaw
 
             m.addSubMenu ("Open Recent", recent, recent.getNumItems() > 0);
             add ({ 0, CommandIDs::saveProject, CommandIDs::saveProjectAs, CommandIDs::revealProjectFolder,
-                   0, CommandIDs::importAudio, CommandIDs::importMidi,
-                   0, CommandIDs::exportMixdown, CommandIDs::exportStems, CommandIDs::exportMidi,
+                   0, CommandIDs::importAudio, CommandIDs::importMidi, CommandIDs::importDawProject,
+                   0, CommandIDs::exportMixdown, CommandIDs::exportStems, CommandIDs::exportMidi, CommandIDs::exportDawProject,
                    0, CommandIDs::showAudioSettings, CommandIDs::showPreferences,
                    0, juce::StandardApplicationCommandIDs::quit });
         }
@@ -626,6 +729,8 @@ namespace cdaw
             add ({ CommandIDs::undo, CommandIDs::redo, 0,
                    CommandIDs::deleteSelection, CommandIDs::duplicate, CommandIDs::splitAtCursor, CommandIDs::muteClips, 0,
                    CommandIDs::deleteRangeCloseGap, CommandIDs::nudgeLeft, CommandIDs::nudgeRight, 0,
+                   CommandIDs::crossfadeClips, CommandIDs::toggleClipLoop, CommandIDs::resetClipGain, 0,
+                   CommandIDs::addSection, 0,
                    CommandIDs::selectAll, CommandIDs::deselectAll, 0,
                    CommandIDs::toggleSnap, CommandIDs::gridFiner, CommandIDs::gridCoarser });
 
@@ -641,7 +746,7 @@ namespace cdaw
                    CommandIDs::returnToStart, CommandIDs::gotoEnd, 0,
                    CommandIDs::addMarker, CommandIDs::prevMarker, CommandIDs::nextMarker, 0,
                    CommandIDs::toggleLoop, CommandIDs::setLoopToSelection, CommandIDs::togglePunch, 0,
-                   CommandIDs::toggleClick, CommandIDs::toggleCountIn, CommandIDs::toggleFollowPlayhead });
+                   CommandIDs::toggleClick, CommandIDs::metronomeSettings, CommandIDs::toggleCountIn, CommandIDs::toggleFollowPlayhead, CommandIDs::toggleReturnOnStop });
         }
         else if (index == 3)
         {
@@ -652,7 +757,8 @@ namespace cdaw
         }
         else if (index == 4)
         {
-            add ({ CommandIDs::toggleInspector, CommandIDs::toggleEditor, CommandIDs::toggleMixer, CommandIDs::toggleAutomation, 0,
+            add ({ CommandIDs::toggleInspector, CommandIDs::toggleEditor, CommandIDs::toggleMixer, CommandIDs::toggleAutomation,
+                   CommandIDs::toggleArranger, CommandIDs::toggleSpectrum, 0,
                    CommandIDs::zoomIn, CommandIDs::zoomOut, CommandIDs::zoomToFit, 0,
                    CommandIDs::zoomInVertical, CommandIDs::zoomOutVertical });
         }

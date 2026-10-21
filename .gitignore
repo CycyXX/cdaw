@@ -6,3 +6,4 @@ CMakeUserPresets.json
 /scratch/
 **/Cache/
 compile_commands.json
+dist/

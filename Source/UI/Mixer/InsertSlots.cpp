@@ -96,6 +96,12 @@ namespace cdaw
                 m.addItem ("Move Down", idx < inserts.size() - 1, false, [moveTo, inserts, idx] { moveTo (inserts[idx + 1], true); });
             }
 
+            if (MixerOps::canSidechain (*p))
+            {
+                m.addSeparator();
+                m.addSubMenu ("Sidechain from", MixerOps::createSidechainMenu (*p));
+            }
+
             if (auto ext = dynamic_cast<te::ExternalPlugin*> (p.get()))
             {
                 auto latency = ext->getLatencySeconds() * 1000.0;
@@ -123,6 +129,20 @@ namespace cdaw
             }
         }
 
+        // "SC" badge on the name when the plugin is keyed from another track.
+        void paintOverChildren (juce::Graphics& g) override
+        {
+            if (sidechainName.isEmpty())
+                return;
+
+            auto badge = name.getBounds().removeFromRight (20).reduced (2, 4).toFloat();
+            g.setColour (Palette::automation);
+            g.fillRoundedRectangle (badge, 3.0f);
+            g.setColour (Palette::windowBackground);
+            g.setFont (juce::FontOptions (9.0f, juce::Font::bold));
+            g.drawText ("SC", badge, juce::Justification::centred, false);
+        }
+
         void resized() override
         {
             auto r = getLocalBounds();
@@ -138,12 +158,31 @@ namespace cdaw
             name.setBounds (r);
         }
 
+        /** Bypass state and name, after they change. */
+        void syncState()
+        {
+            power.setToggleState (plugin->isEnabled(), juce::dontSendNotification);
+            name.setButtonText (plugin->getName() + (plugin->isMissing() ? " (missing)" : ""));
+            name.setColour (juce::TextButton::textColourOffId, plugin->isEnabled() ? Palette::text : Palette::textDisabled);
+        }
+
         void refresh()
         {
             auto newLatency = plugin->getLatencySeconds() * 1000.0;
             if (std::abs (newLatency - latencyMs) > 0.01)
             {
                 latencyMs = newLatency;
+                repaint();
+            }
+
+            auto* source = MixerOps::getSidechainSource (*plugin);
+            auto newSidechain = source != nullptr ? source->getName() : juce::String();
+
+            if (newSidechain != sidechainName)
+            {
+                sidechainName = newSidechain;
+                name.setTooltip (plugin->getName() + (sidechainName.isNotEmpty() ? "\nSidechain from: " + sidechainName : juce::String())
+                                 + "\nClick to open, right-click for options");
                 repaint();
             }
         }
@@ -153,6 +192,7 @@ namespace cdaw
         juce::TextButton power, name, remove;
         juce::Rectangle<int> latencyArea;
         double latencyMs = 0.0;
+        juce::String sidechainName;
     };
 
     InsertSlots::InsertSlots (te::Track::Ptr t, bool c) : InsertSlots (t->pluginList, c)
@@ -186,19 +226,38 @@ namespace cdaw
 
         resized();
 
-        if (auto* parent = getParentComponent())
+        if (onIdealHeightChanged)
+            onIdealHeightChanged();
+        else if (auto* parent = getParentComponent())
             parent->resized();
+    }
+
+    void InsertSlots::handleAsyncUpdate()
+    {
+        if (compareAndReset (needsRebuild))
+        {
+            needsRowUpdate = false;
+            rebuild();
+        }
+        else if (compareAndReset (needsRowUpdate))
+        {
+            for (auto r : rows)
+                r->syncState();
+        }
     }
 
     void InsertSlots::timerCallback()
     {
+        if (! isShowing())
+            return;
+
         for (auto r : rows)
             r->refresh();
     }
 
     int InsertSlots::getIdealHeight() const
     {
-        return (rows.size() + 1) * (rowHeight + 2);
+        return (rows.size() + 1) * rowPitch;
     }
 
     void InsertSlots::resized()
@@ -339,13 +398,15 @@ namespace cdaw
 
         resized();
 
-        if (auto* parent = getParentComponent())
+        if (onIdealHeightChanged)
+            onIdealHeightChanged();
+        else if (auto* parent = getParentComponent())
             parent->resized();
     }
 
     int SendSlots::getIdealHeight() const
     {
-        return (rows.size() + 1) * (InsertSlots::rowHeight + 2);
+        return (rows.size() + 1) * InsertSlots::rowPitch;
     }
 
     void SendSlots::resized()

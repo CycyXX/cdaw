@@ -32,4 +32,24 @@ namespace cdaw::MixerOps
 
     /** Total plugin latency on a track in ms. */
     double getTrackLatencyMs (te::Track&);
+
+    //==============================================================================
+    // Sidechain: a plugin with a sidechain input (e.g. the built-in compressor, or a VST3
+    // with a sidechain bus) can be keyed from another track's signal.
+
+    /** True if the plugin has a sidechain input. */
+    bool canSidechain (te::Plugin&);
+
+    /** Tracks that can feed the plugin's sidechain (audio tracks other than its own). */
+    juce::Array<te::AudioTrack*> getSidechainSources (te::Plugin&);
+
+    /** The track feeding the plugin's sidechain, or null. */
+    te::AudioTrack* getSidechainSource (te::Plugin&);
+
+    /** Keys the plugin from `source` (null switches the sidechain off). The built-in
+        compressor is also switched to listen to the sidechain. */
+    void setSidechainSource (te::Plugin&, te::AudioTrack* source);
+
+    /** Sidechain submenu for a plugin's context menu. */
+    juce::PopupMenu createSidechainMenu (te::Plugin&);
 }

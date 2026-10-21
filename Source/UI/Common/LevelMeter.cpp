@@ -5,7 +5,7 @@ namespace cdaw
 {
     LevelMeter::LevelMeter()
     {
-        setOpaque (false);
+        setOpaque (true);   // paint() fills the whole area
     }
 
     LevelMeter::~LevelMeter()
@@ -47,17 +47,19 @@ namespace cdaw
 
     float LevelMeter::dbToProportion (float db)
     {
-        // Roughly linear-in-feel scale from -60 dB to +6 dB.
+        // Roughly linear-in-feel scale from -60 dB to 0 dBFS. Full scale reaches the very top of
+        // the bar, right under the clip LED; anything above 0 dB lights the LED.
         if (db <= -60.0f)
             return 0.0f;
 
-        auto x = (db + 60.0f) / 66.0f;
+        auto x = (db + 60.0f) / 60.0f;
         return juce::jlimit (0.0f, 1.0f, std::pow (x, 1.6f));
     }
 
     void LevelMeter::timerCallback()
     {
-        if (measurer == nullptr)
+        // Hidden (e.g. the mixer page isn't showing): no work, no repaints.
+        if (measurer == nullptr || ! isShowing())
             return;
 
         numChannels = juce::jlimit (1, maxChannels, client.getNumChannelsUsed());
@@ -78,9 +80,12 @@ namespace cdaw
 
             if (value >= peak[ch] || now - peakTime[ch] > 1500)
             {
+                // Only a visible change counts: in silence everything sits at -100 dB.
+                if (std::abs (value - peak[ch]) > 0.05f)
+                    changed = true;
+
                 peak[ch] = value;
                 peakTime[ch] = now;
-                changed = true;
             }
 
             if (newDb > 0.0f && ! clipped)

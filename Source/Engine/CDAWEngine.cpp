@@ -1,5 +1,7 @@
 #include "CDAWEngine.h"
 #include "PluginWindow.h"
+#include "SafeAsioType.h"
+#include "../Plugins/BuiltInPlugins.h"
 #include "../App/AppSettings.h"
 
 namespace cdaw
@@ -67,6 +69,10 @@ namespace cdaw
 
     int CDAWEngineBehaviour::getNumberOfCPUsToUseForAudio()
     {
+        // Developer override for measurements (CDAW_DEBUG_AUDIO_THREADS=<n>).
+        if (auto n = juce::SystemStats::getEnvironmentVariable ("CDAW_DEBUG_AUDIO_THREADS", {}).getIntValue(); n > 0)
+            return n;
+
         return juce::jmax (1, juce::SystemStats::getNumCpus() - 1);
     }
 
@@ -163,14 +169,24 @@ namespace cdaw
         auto ui = std::make_unique<CDAWUIBehaviour>();
         uiBehaviour = ui.get();
 
+        // Developer override for measurements (CDAW_DEBUG_POOL=<tracktion::graph::ThreadPoolStrategy>).
+        if (auto pool = juce::SystemStats::getEnvironmentVariable ("CDAW_DEBUG_POOL", {}); pool.isNotEmpty())
+            te::EditPlaybackContext::setThreadPoolStrategy (pool.getIntValue());
+
         engine = std::make_unique<te::Engine> (std::make_unique<te::PropertyStorage> ("CDAW"),
                                                std::move (ui),
                                                std::make_unique<CDAWEngineBehaviour> (settings));
+
+        // Register filtered device types, then open the saved device (falling back safely).
+        registerAudioDeviceTypes (engine->getDeviceManager().deviceManager);
+        engine->getDeviceManager().initialise (te::DeviceManager::defaultNumChannelsToOpen,
+                                               te::DeviceManager::defaultNumChannelsToOpen);
 
         auto& pm = engine->getPluginManager();
         pm.setUsesSeparateProcessForScanning (true);
         pm.createBuiltInType<te::ImpulseResponsePlugin>();
         pm.createBuiltInType<te::ToneGeneratorPlugin>();
+        BuiltInPlugins::registerTypes (*engine);
 
         engine->getDeviceManager().addChangeListener (this);
         applyRecordingDefaults();

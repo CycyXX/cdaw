@@ -1,6 +1,7 @@
 #include "AppContext.h"
 #include "MainWindow.h"
 #include "../Model/ProjectSession.h"
+#include "../Model/ClipOps.h"
 
 namespace cdaw
 {
@@ -23,6 +24,7 @@ namespace cdaw
     AppContext::~AppContext()
     {
         mainWindow.reset();
+        ClipOps::cancelRunningImport();
         session.reset();
         settings.saveIfNeeded();
         juce::LookAndFeel::setDefaultLookAndFeel (nullptr);

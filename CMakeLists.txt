@@ -12,6 +12,15 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
+# RelWithDebInfo is the build that ships (dist\CDAW): full optimisation and inlining (CMake's
+# default is /Ob1), and a non-incremental link so /OPT:REF and /OPT:ICF can drop and fold code.
+# Debug info stays (/Z7 + /DEBUG) so crash reports can name functions.
+if(MSVC)
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "/O2 /Ob2 /DNDEBUG")
+    set(CMAKE_C_FLAGS_RELWITHDEBINFO "/O2 /Ob2 /DNDEBUG")
+    set(CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO "/DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF")
+endif()
+
 # Tracktion's module translation units are huge and use a lot of RAM: cap their parallelism.
 set_property(GLOBAL APPEND PROPERTY JOB_POOLS heavy=4)
 

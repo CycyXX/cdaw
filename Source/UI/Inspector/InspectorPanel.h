@@ -2,6 +2,7 @@
 
 #include "../../PCH.h"
 #include "../../Model/EditViewState.h"
+#include "../Common/PanKnob.h"
 
 namespace cdaw
 {
@@ -26,7 +27,9 @@ namespace cdaw
 
     private:
         void changeListenerCallback (juce::ChangeBroadcaster*) override;
-        void timerCallback() override;
+        void timerCallback() override           { if (isShowing() || track == nullptr) refreshState(); }   // idle while hidden
+        void visibilityChanged() override       { if (isShowing()) refreshState(); }
+        void refreshState();
         void setTrack (te::Track*);
         te::Track* findSelectedTrack() const;
 
@@ -37,10 +40,12 @@ namespace cdaw
         juce::TextButton inputButton, outputButton, drumMapButton;
         std::unique_ptr<InsertSlots> inserts;
         std::unique_ptr<SendSlots> sends;
-        juce::Slider volume, pan;
+        juce::Slider volume;
+        PanKnob pan;
         std::unique_ptr<LevelMeter> meter;
         juce::Label volumeLabel;
         juce::Rectangle<int> insertsHeaderArea, sendsHeaderArea, routingHeaderArea, faderHeaderArea;
         bool updating = false;
+        juce::var shownDrumMapSetting { "<unset>" };   // drum map lookups read files: only redo them when this changes
     };
 }

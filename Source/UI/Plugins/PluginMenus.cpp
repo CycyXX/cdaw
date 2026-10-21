@@ -1,6 +1,10 @@
 #include "PluginMenus.h"
 #include "../LookAndFeel/Palette.h"
 #include "../../App/AppSettings.h"
+#include "../../Model/TrackOps.h"
+#include "../../Plugins/BuiltInPlugins.h"
+#include "../../Plugins/ReverbPlugin.h"
+#include "../../Plugins/SimpleReverbPlugin.h"
 
 namespace cdaw::PluginMenus
 {
@@ -15,9 +19,11 @@ namespace cdaw::PluginMenus
     {
         using PM = te::PluginManager;
         return {
-            PM::createBuiltInPluginDescription<te::EqualiserPlugin>(),
-            PM::createBuiltInPluginDescription<te::CompressorPlugin>(),
-            PM::createBuiltInPluginDescription<te::ReverbPlugin>(),
+            BuiltInPlugins::getEqDescription(),
+            BuiltInPlugins::getCompressorDescription(),
+            BuiltInPlugins::getMultibandDescription(),
+            BuiltInPlugins::getSimpleReverbDescription(),
+            BuiltInPlugins::getReverbDescription(),
             PM::createBuiltInPluginDescription<te::DelayPlugin>(),
             PM::createBuiltInPluginDescription<te::ChorusPlugin>(),
             PM::createBuiltInPluginDescription<te::PhaserPlugin>(),
@@ -119,7 +125,10 @@ namespace cdaw::PluginMenus
         te::Track::Ptr owner = list.getOwnerTrack();
         auto* listPtr = &list;
         auto& editRef = list.getEdit();
-        auto menu = createMenu (editRef.engine, owner != nullptr ? Kind::all : Kind::effects,
+        // Instruments only make sense on instrument tracks: a synth replaces the track's audio with what it
+        // plays from MIDI, so on an audio track it just goes silent.
+        const bool instrumentTrack = owner != nullptr && TrackOps::getKind (*owner) == TrackKind::instrument;
+        auto menu = createMenu (editRef.engine, instrumentTrack ? Kind::all : Kind::effects,
                                 [owner, listPtr, index, &editRef] (const juce::PluginDescription& desc)
         {
             auto& edit = editRef;
@@ -130,7 +139,17 @@ namespace cdaw::PluginMenus
                 auto idx = index < 0 ? getPreFaderInsertIndex (*listPtr) : index;
                 listPtr->insertPlugin (p, idx, nullptr);
 
-                if (dynamic_cast<te::ExternalPlugin*> (p.get()) != nullptr)
+                // On an FX return the reverb is all you want to hear: fully wet.
+                if (owner != nullptr && TrackOps::getKind (*owner) == TrackKind::fx)
+                {
+                    if (auto reverb = dynamic_cast<ReverbPlugin*> (p.get()))
+                        reverb->mix.setParameter (1.0f, juce::sendNotification);
+                    else if (auto simple = dynamic_cast<SimpleReverbPlugin*> (p.get()))
+                        simple->mix.setParameter (1.0f, juce::sendNotification);
+                }
+
+                // Open the new plugin's window straight away (sends are set up in the mixer instead).
+                if (dynamic_cast<te::AuxSendPlugin*> (p.get()) == nullptr)
                     p->showWindowExplicitly();
             }
             else

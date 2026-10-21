@@ -1,13 +1,40 @@
 #include "ProjectSession.h"
+#include "../Plugins/BuiltInPlugins.h"
 
 namespace cdaw
 {
-    ProjectSession::ProjectSession (te::Engine& e, const juce::File& file, const juce::File& recoverFrom)
-        : engine (e), editFile (file)
+    juce::File ProjectSession::resolveRelativePath (const juce::File& editFile, const juce::String& path)
     {
+        if (juce::File::isAbsolutePath (path))
+            return juce::File (path);
+
+        // Tracktion writes relative paths in two styles: relative to the project folder
+        // ("Audio/x.wav") and relative to the edit file itself ("../Audio/x.wav").
+        auto fromFolder = editFile.getParentDirectory().getChildFile (path);
+        auto fromFile = editFile.getChildFile (path);
+
+        if (fromFolder.exists())    return fromFolder;
+        if (fromFile.exists())      return fromFile;
+
+        return path.startsWith ("..") ? fromFile : fromFolder;
+    }
+
+    bool ProjectSession::isProjectFile (const juce::File& f)
+    {
+        return f.hasFileExtension (projectFileSuffix) || f.hasFileExtension (legacyProjectFileSuffix);
+    }
+
+    ProjectSession::ProjectSession (te::Engine& e, const juce::File& file, const juce::File& recoverFrom)
+        : engine (e), editFile (file.withFileExtension (projectFileSuffix))
+    {
+        // An old .tracktionedit is read once and continues life as <Name>.cdaw. If both exist,
+        // the .cdaw is the current one.
+        auto sourceFile = editFile.existsAsFile() ? editFile : file;
+        const bool migrating = sourceFile != editFile && sourceFile.existsAsFile();
+
         ensureFolders();
         const bool recovering = recoverFrom.existsAsFile();
-        const bool isNew = ! editFile.existsAsFile() && ! recovering;
+        const bool isNew = ! sourceFile.existsAsFile() && ! recovering;
 
         juce::ValueTree state;
 
@@ -16,13 +43,17 @@ namespace cdaw
         else if (isNew)
             state = te::createEmptyEdit (engine);
         else
-            state = te::loadEditFromFile (engine, editFile, te::ProjectItemID::createNewID ({}));
+            state = te::loadEditFromFile (engine, sourceFile, te::ProjectItemID::createNewID ({}));
 
         if (! state.isValid())
         {
             juce::Logger::writeToLog ("Could not read project: " + editFile.getFullPathName());
             return;
         }
+
+        // Plugins from earlier builds become CDAW's own compressor and EQ.
+        if (auto converted = BuiltInPlugins::migrateEditState (state); converted > 0)
+            juce::Logger::writeToLog ("Converted " + juce::String (converted) + " built-in plugin(s) to CDAW's versions");
 
         auto id = te::ProjectItemID::fromProperty (state, te::IDs::projectID);
         if (! id.isValid())
@@ -39,10 +70,7 @@ namespace cdaw
         // doesn't use.
         options.filePathResolver = [this] (const juce::String& path) -> juce::File
         {
-            if (juce::File::isAbsolutePath (path))
-                return juce::File (path);
-
-            return editFile.getChildFile (path);
+            return resolveRelativePath (editFile, path);
         };
         options.numAudioTracks = isNew ? 1 : 0;
 
@@ -52,6 +80,8 @@ namespace cdaw
         {
             configureEdit (isNew);
             viewState = std::make_unique<EditViewState> (*edit, selectionManager);
+            analyser = std::make_unique<MasterAnalyser> (*edit);
+            viewState->analyser = analyser.get();
             startTimer (60 * 1000);   // autosave
 
             if (recovering)
@@ -59,12 +89,24 @@ namespace cdaw
                 edit->markAsChanged();
                 juce::Logger::writeToLog ("Recovered project from " + recoverFrom.getFullPathName());
             }
+            else if (migrating)
+            {
+                // Write the .cdaw straight away so the project is in the new format even if
+                // nothing is changed. A recovered project waits for the user to save instead.
+                juce::Logger::writeToLog ("Converting " + sourceFile.getFullPathName() + " to " + projectFileSuffix);
+                save();
+            }
         }
     }
 
     ProjectSession::~ProjectSession()
     {
         stopTimer();
+
+        if (viewState != nullptr)
+            viewState->analyser = nullptr;
+
+        analyser.reset();
         viewState.reset();
 
         if (edit != nullptr)
@@ -125,6 +167,7 @@ namespace cdaw
         {
             ops.deleteTempVersion();
             edit->resetChangedStatus();
+            retireLegacyFile();
             engine.getEngineBehaviour().editHasBeenSaved (*edit, editFile);
         }
 
@@ -141,7 +184,7 @@ namespace cdaw
         // the new location. Existing audio stays where it is; new recordings go to the
         // new project's Audio folder.
         te::convertAllSourcePaths (*edit, false);
-        editFile = newEditFile.withFileExtension (te::editFileSuffix);
+        editFile = newEditFile.withFileExtension (projectFileSuffix);
         ensureFolders();
         edit->setTempDirectory (getProjectFolder().getChildFile ("Cache"));
         te::convertAllSourcePaths (*edit, true);
@@ -165,14 +208,28 @@ namespace cdaw
 
         auto folder = getBackupsFolder();
         auto name = getName() + "_" + juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S");
-        editFile.copyFileTo (folder.getNonexistentChildFile (name, te::editFileSuffix, false));
+        editFile.copyFileTo (folder.getNonexistentChildFile (name, projectFileSuffix, false));
 
-        auto backups = folder.findChildFiles (juce::File::findFiles, false, "*" + juce::String (te::editFileSuffix));
+        auto backups = folder.findChildFiles (juce::File::findFiles, false, "*" + juce::String (projectFileSuffix));
         std::sort (backups.begin(), backups.end(), [] (const juce::File& a, const juce::File& b)
                    { return a.getLastModificationTime() > b.getLastModificationTime(); });
 
         for (int i = 10; i < backups.size(); ++i)
             backups.getReference (i).deleteFile();
+    }
+
+    void ProjectSession::retireLegacyFile()
+    {
+        auto legacy = editFile.withFileExtension (legacyProjectFileSuffix);
+
+        if (! legacy.existsAsFile())
+            return;
+
+        auto dest = getBackupsFolder().getNonexistentChildFile (legacy.getFileNameWithoutExtension() + "_before_cdaw",
+                                                                legacyProjectFileSuffix, false);
+
+        if (legacy.moveFileTo (dest))
+            juce::Logger::writeToLog ("Moved the old project file to " + dest.getFullPathName());
     }
 
     juce::File ProjectSession::findNewerAutosave (const juce::File& file)
@@ -199,6 +256,6 @@ namespace cdaw
         auto legal = juce::File::createLegalFileName (name.trim().isEmpty() ? juce::String ("Untitled") : name.trim());
         auto folder = parent.getNonexistentChildFile (legal, {}, false);
         folder.createDirectory();
-        return folder.getChildFile (folder.getFileName() + te::editFileSuffix);
+        return folder.getChildFile (folder.getFileName() + projectFileSuffix);
     }
 }

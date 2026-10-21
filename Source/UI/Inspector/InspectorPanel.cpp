@@ -12,6 +12,7 @@ namespace cdaw
 {
     InspectorPanel::InspectorPanel (EditViewState& vs) : viewState (vs)
     {
+        setOpaque (true);   // paint() fills the whole component
         meter = std::make_unique<LevelMeter>();
 
         nameLabel.setFont (juce::FontOptions (15.0f, juce::Font::bold));
@@ -93,10 +94,6 @@ namespace cdaw
                     vp->setSliderPos ((float) volume.getValue());
         };
 
-        pan.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-        pan.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
-        pan.setRange (-1.0, 1.0);
-        pan.setDoubleClickReturnValue (true, 0.0);
         pan.onValueChange = [this]
         {
             if (! updating && track != nullptr)
@@ -148,6 +145,7 @@ namespace cdaw
         sends.reset();
         meter->detach();
         track = t;
+        shownDrumMapSetting = "<unset>";
 
         // The track may have been deleted.
         if (track != nullptr && ! te::containsTrack (viewState.edit, *track))
@@ -181,12 +179,12 @@ namespace cdaw
             if (auto mp = TrackHeader::getMeterPlugin (*track))
                 meter->attach (&mp->measurer, mp);
 
-        timerCallback();
+        refreshState();
         resized();
         repaint();
     }
 
-    void InspectorPanel::timerCallback()
+    void InspectorPanel::refreshState()
     {
         if (track != nullptr && ! te::containsTrack (viewState.edit, *track))
         {
@@ -212,8 +210,14 @@ namespace cdaw
 
         if (drumMapButton.isVisible())
         {
-            auto map = DrumMapLibrary::getForTrack (*track);
-            drumMapButton.setButtonText ("Drum map: " + (map ? map->name : juce::String ("none")));
+            auto setting = track->state.getProperty (ViewIDs::cdawDrumMap);
+
+            if (setting != shownDrumMapSetting)
+            {
+                shownDrumMapSetting = setting;
+                auto map = DrumMapLibrary::getForTrack (*track);
+                drumMapButton.setButtonText ("Drum map: " + (map ? map->name : juce::String ("none")));
+            }
         }
 
         if (auto vp = TrackHeader::getVolumePlugin (*track))
@@ -301,7 +305,7 @@ namespace cdaw
             r.removeFromTop (6);
             faderHeaderArea = r.removeFromTop (16);
             auto row = r.removeFromTop (26);
-            pan.setBounds (row.removeFromRight (26));
+            pan.setBounds (row.removeFromRight (PanKnob::widthForHeight (row.getHeight())));
             volumeLabel.setBounds (row.removeFromRight (64));
             volume.setBounds (row);
             r.removeFromTop (4);

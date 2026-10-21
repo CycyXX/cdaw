@@ -21,21 +21,26 @@ namespace cdaw
         void paint (juce::Graphics&) override;
         int getIdealHeight() const;
 
+        /** Called when slots are added or removed (default: the parent is re-laid out). */
+        std::function<void()> onIdealHeightChanged;
+
         static constexpr int rowHeight = 22;
+        static constexpr int rowPitch = rowHeight + 2;
 
     private:
         struct Row;
 
         void rebuild();
-        void handleAsyncUpdate() override              { if (compareAndReset (needsRebuild)) rebuild(); }
+        void handleAsyncUpdate() override;
         void timerCallback() override;
         void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree& c) override         { if (c.hasType (te::IDs::PLUGIN)) markAndUpdate (needsRebuild); }
         void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree& c, int) override  { if (c.hasType (te::IDs::PLUGIN)) markAndUpdate (needsRebuild); }
         void valueTreeChildOrderChanged (juce::ValueTree&, int, int) override            { markAndUpdate (needsRebuild); }
         void valueTreePropertyChanged (juce::ValueTree& v, const juce::Identifier& id) override
         {
+            // Bypass / rename: update the rows in place (a rebuild is only needed when plugins come or go).
             if (v.hasType (te::IDs::PLUGIN) && (id == te::IDs::enabled || id == te::IDs::name))
-                markAndUpdate (needsRebuild);
+                markAndUpdate (needsRowUpdate);
         }
 
         te::Track::Ptr track;
@@ -43,7 +48,7 @@ namespace cdaw
         bool compact;
         juce::OwnedArray<Row> rows;
         juce::TextButton addButton { "+ Insert" };
-        bool needsRebuild = false;
+        bool needsRebuild = false, needsRowUpdate = false;
     };
 
     /** List of a track's sends: bus, level, pre/post, remove, plus "+ Send". */
@@ -57,6 +62,9 @@ namespace cdaw
 
         void resized() override;
         int getIdealHeight() const;
+
+        /** Called when sends are added or removed (default: the parent is re-laid out). */
+        std::function<void()> onIdealHeightChanged;
 
     private:
         struct Row;

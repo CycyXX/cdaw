@@ -12,7 +12,7 @@ namespace cdaw
     //==============================================================================
     struct BeatRuler : public juce::Component
     {
-        explicit BeatRuler (PianoRoll& o) : owner (o) {}
+        explicit BeatRuler (PianoRoll& o) : owner (o)    { setOpaque (true); }
 
         void paint (juce::Graphics& g) override
         {
@@ -60,7 +60,7 @@ namespace cdaw
     //==============================================================================
     struct KeysPanel : public juce::Component
     {
-        explicit KeysPanel (PianoRoll& o) : owner (o) {}
+        explicit KeysPanel (PianoRoll& o) : owner (o)    { setOpaque (true); }
 
         void paint (juce::Graphics& g) override
         {
@@ -123,6 +123,7 @@ namespace cdaw
     {
         explicit NoteGrid (PianoRoll& o) : owner (o)
         {
+            setOpaque (true);
             setWantsKeyboardFocus (false);
         }
 
@@ -154,11 +155,12 @@ namespace cdaw
                 }
             }
 
-            // Vertical grid
+            // Vertical grid, only across the area being repainted (often just the playhead strip).
             auto& ts = owner.edit.tempoSequence;
+            auto dirty = g.getClipBounds();
             auto gridBeats = owner.getGridBeats();
-            auto first = std::floor (L.scrollBeat / gridBeats) * gridBeats;
-            auto last = owner.xToEditBeat (getWidth());
+            auto first = std::floor (owner.xToEditBeat (dirty.getX() - 2) / gridBeats) * gridBeats;
+            auto last = owner.xToEditBeat (dirty.getRight() + 2);
 
             if (gridBeats * L.pixelsPerBeat > 5.0)
             {
@@ -180,11 +182,17 @@ namespace cdaw
             g.fillRect (0.0f, 0.0f, (float) owner.editBeatToX (clipStart), (float) getHeight());
             g.fillRect ((float) owner.editBeatToX (clipEnd), 0.0f, (float) getWidth(), (float) getHeight());
 
-            // Notes
+            // Notes. Ones outside the repainted area are skipped before any tempo maths.
             auto colour = owner.clip->getColour();
+            auto firstBeat = owner.clip->getContentBeatAtTime (ts.toTime (te::BeatPosition::fromBeats (owner.xToEditBeat (dirty.getX() - 4))));
+            auto lastBeat = owner.clip->getContentBeatAtTime (ts.toTime (te::BeatPosition::fromBeats (owner.xToEditBeat (dirty.getRight() + 4))));
 
             for (auto n : owner.clip->getSequence().getNotes())
             {
+                // (Drum notes draw a diamond up to half a row wider than the note: keep a beat of margin.)
+                if (n->getEndBeat() + te::BeatDuration::fromBeats (1.0) < firstBeat || n->getStartBeat() - te::BeatDuration::fromBeats (1.0) > lastBeat)
+                    continue;
+
                 auto r = owner.getNoteBounds (*n);
                 if (r.getRight() < 0 || r.getX() > getWidth() || r.getBottom() < 0 || r.getY() > getHeight())
                     continue;
@@ -507,7 +515,7 @@ namespace cdaw
     //==============================================================================
     struct VelocityLane : public juce::Component
     {
-        explicit VelocityLane (PianoRoll& o) : owner (o) {}
+        explicit VelocityLane (PianoRoll& o) : owner (o)    { setOpaque (true); }
 
         void paint (juce::Graphics& g) override
         {
@@ -681,13 +689,13 @@ namespace cdaw
 
     double PianoRoll::getGridBeats() const
     {
-        auto grid = viewState.getGrid();
+        auto grid = viewState.resolveGrid (layout.pixelsPerBeat);
         auto t = edit.tempoSequence.toTime (te::BeatPosition::fromBeats (layout.scrollBeat));
         auto& sig = edit.tempoSequence.getTimeSigAt (t);
         auto den = juce::jmax (1, sig.denominator.get());
 
         if (grid.wholeNotes <= 0.0)
-            return (double) juce::jmax (1, sig.numerator.get());
+            return (double) (juce::jmax (1, sig.numerator.get()) * juce::jmax (1, grid.bars));
 
         return grid.wholeNotes * den;
     }
@@ -755,21 +763,44 @@ namespace cdaw
 
     void PianoRoll::timerCallback()
     {
+        // Hidden editor page: nothing to move (a full repaint happens when it's shown).
+        if (! isShowing())
+            return;
+
         auto beat = edit.tempoSequence.toBeats (edit.getTransport().getPosition()).inBeats();
 
         if (std::abs (beat - lastPlayheadBeat) > 1e-4)
         {
+            bool scrolled = false;
+
             // Follow playback.
             if (edit.getTransport().isPlaying() && viewState.followPlayhead.get())
             {
                 auto x = editBeatToX (beat);
                 if (x > grid->getWidth() * 0.92 || x < 0)
+                {
                     layout.scrollBeat = juce::jmax (0.0, beat - 1.0);
+                    scrolled = true;
+                }
+            }
+
+            if (scrolled || lastPlayheadBeat < 0.0)
+            {
+                grid->repaint();
+                ruler->repaint();
+            }
+            else
+            {
+                // Just the playhead's old and new positions.
+                for (auto b : { lastPlayheadBeat, beat })
+                {
+                    auto strip = juce::Rectangle<int> ((int) editBeatToX (b) - 3, 0, 7, grid->getHeight());
+                    grid->repaint (strip);
+                    ruler->repaint (ruler->getLocalArea (grid.get(), strip).withY (0).withHeight (ruler->getHeight()));
+                }
             }
 
             lastPlayheadBeat = beat;
-            grid->repaint();
-            ruler->repaint();
         }
     }
 

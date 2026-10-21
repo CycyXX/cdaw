@@ -1,4 +1,7 @@
 #include "TestEngine.h"
+#include "Model/DawProject.h"
+#include "Plugins/BuiltInPlugins.h"
+#include "Plugins/EqPlugin.h"
 #include "Model/MixerOps.h"
 #include "Model/TrackOps.h"
 #include "Model/ProjectSession.h"
@@ -43,10 +46,14 @@ namespace cdaw::test
                     auto& edit = s.getEdit();
                     auto track = te::getAudioTracks (edit)[0];
 
-                    auto eq = PluginMenus::createPlugin (edit, te::PluginManager::createBuiltInPluginDescription<te::EqualiserPlugin>());
+                    auto eq = PluginMenus::createPlugin (edit, BuiltInPlugins::getEqDescription());
                     expect (eq != nullptr);
                     track->pluginList.insertPlugin (eq, PluginMenus::getPreFaderInsertIndex (*track), nullptr);
-                    eq->getAutomatableParameter (0)->setParameter (0.3f, juce::sendNotification);
+                    auto* cdawEq = dynamic_cast<EqPlugin*> (eq.get());
+                    expect (cdawEq != nullptr);
+                    cdawEq->getBand (4).gain.setParameter (-3.5f, juce::sendNotification);
+                    cdawEq->setType (4, EqMath::BandType::highShelf);
+                    cdawEq->setOn (4, true);
 
                     auto fx = TrackOps::addFxTrack (edit, nullptr);
                     auto buses = MixerOps::getFxBuses (edit);
@@ -60,7 +67,13 @@ namespace cdaw::test
                     auto track = te::getAudioTracks (s.getEdit())[0];
                     auto inserts = MixerOps::getInserts (*track);
                     expectEquals (inserts.size(), 1);
-                    expect (dynamic_cast<te::EqualiserPlugin*> (inserts[0]) != nullptr);
+                    auto* eq = dynamic_cast<EqPlugin*> (inserts[0]);
+                    expect (eq != nullptr);
+                    if (eq != nullptr)
+                    {
+                        expect (eq->isOn (4) && eq->getType (4) == EqMath::BandType::highShelf);
+                        expectWithinAbsoluteError (eq->getBand (4).gain.getCurrentValue(), -3.5f, 0.001f);
+                    }
 
                     auto sends = MixerOps::getSends (*track);
                     expectEquals (sends.size(), 1);
@@ -110,6 +123,32 @@ namespace cdaw::test
                         auto peak = out.buffer.getMagnitude (0, out.buffer.getNumSamples());
                         logMessage ("Output peak: " + juce::String (peak, 4));
                         expect (peak > 0.0001f, "Nolly X produced silence");
+
+                        // DAWproject export of the same instance (a second Nolly X instance in this
+                        // windowless process crashes once the message loop runs, so it isn't re-imported
+                        // here; the in-app round trip is CDAW_DEBUG_DAWPROJECT).
+                        auto dawFile = getTestDir().getChildFile ("nolly.dawproject");
+                        DawProject::Report report;
+                        expect (DawProject::exportTo (*edit, dawFile, report).wasOk());
+
+                        juce::ZipFile zip (dawFile);
+                        std::unique_ptr<juce::XmlElement> xml;
+                        if (auto* entry = zip.getEntry ("project.xml"))
+                            xml = juce::parseXML (std::unique_ptr<juce::InputStream> (zip.createStreamForEntry (*entry))->readEntireStreamAsString());
+
+                        juce::XmlElement* device = nullptr;
+                        if (xml != nullptr)
+                            if (auto* t = xml->getChildByName ("Structure")->getChildByName ("Track"))
+                                device = t->getChildByName ("Channel")->getChildByName ("Devices")->getChildByName ("Vst3Plugin");
+
+                        expect (device != nullptr, "Vst3Plugin written");
+                        if (device != nullptr)
+                        {
+                            logMessage ("DAWproject deviceID " + device->getStringAttribute ("deviceID") + ", vendor " + device->getStringAttribute ("deviceVendor"));
+                            expectEquals (device->getStringAttribute ("deviceID").length(), 32);
+                            auto* state = device->getChildByName ("State");
+                            expect (state != nullptr && zip.getEntry (state->getStringAttribute ("path")) != nullptr, ".vstpreset embedded");
+                        }
                     }
                 }
             }

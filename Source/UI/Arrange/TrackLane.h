@@ -48,7 +48,10 @@ namespace cdaw
         std::unique_ptr<RecordingClipComponent> recordingClip;
         std::unique_ptr<TakeLanes> takeLanes;
         int lastNumTakes = 0;
+        bool lastSelected = false;
+        juce::Range<int> lastRangeX;        // x span of the range selection as last painted
         void updateTakeLanes();
+        void repaintRangeChange();
         bool needsRebuild = false, needsReposition = false, needsRecordingUpdate = false;
     };
 }

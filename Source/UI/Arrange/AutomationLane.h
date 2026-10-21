@@ -48,7 +48,12 @@ namespace cdaw
 
     private:
         void curveHasChanged (te::AutomatableParameter&) override       { triggerAsyncUpdate(); }
-        void currentValueChanged (te::AutomatableParameter&) override   { triggerAsyncUpdate(); }
+        void currentValueChanged (te::AutomatableParameter& p) override
+        {
+            // Only the "no automation yet" line shows the live value; a drawn curve doesn't change.
+            if (p.getCurve().getNumPoints() == 0)
+                triggerAsyncUpdate();
+        }
         void handleAsyncUpdate() override                                { repaint(); }
         void valueTreePropertyChanged (juce::ValueTree& v, const juce::Identifier& id) override;
 

@@ -118,6 +118,26 @@ namespace cdaw::test
                 expectWithinAbsoluteError (vs.snapAlways (te::TimePosition::fromSeconds (3.1)).inSeconds(), 4.0, 1e-6);
             }
 
+            beginTest ("Adaptive grid follows the zoom level");
+            {
+                auto edit = te::test_utilities::createTestEdit (engine, 1);
+                edit->tempoSequence.getTempo (0)->setBpm (120.0);
+                te::SelectionManager sm (engine);
+                EditViewState vs (*edit, sm);
+                vs.gridIndex = EditViewState::getAdaptiveGridIndex();
+
+                vs.pixelsPerSecond = 400.0;  // 200 px per beat -> 1/32 (25 px)
+                expectEquals (vs.getGrid().name, juce::String ("1/32"));
+                vs.pixelsPerSecond = 40.0;   // 20 px per beat -> 1/4
+                expectEquals (vs.getGrid().name, juce::String ("1/4"));
+                vs.pixelsPerSecond = 4.0;    // 2 px per beat, 8 px per bar -> 2 bars
+                expectEquals (vs.getGrid().name, juce::String ("2 bars"));
+
+                // Snapping at 2-bar resolution (bar = 2 s): 5.1 s -> 4 s, 6.1 s -> 8 s
+                expectWithinAbsoluteError (vs.snapAlways (te::TimePosition::fromSeconds (5.1)).inSeconds(), 4.0, 1e-6);
+                expectWithinAbsoluteError (vs.snapAlways (te::TimePosition::fromSeconds (6.1)).inSeconds(), 8.0, 1e-6);
+            }
+
             beginTest ("Track kinds");
             {
                 auto edit = te::test_utilities::createTestEdit (engine, 1);

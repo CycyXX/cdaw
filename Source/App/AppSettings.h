@@ -80,5 +80,8 @@ namespace cdaw
         inline constexpr const char* reopenLastProject     = "reopenLastProject";
         inline constexpr const char* constrainPdcOnMonitor = "constrainPdcOnMonitor";
         inline constexpr const char* followPlayhead        = "followPlayhead";
+        inline constexpr const char* returnOnStop          = "returnOnStop";
+        inline constexpr const char* lowerZoneVisible      = "lowerZoneVisible";
+        inline constexpr const char* lowerZonePage         = "lowerZonePage";
     }
 }

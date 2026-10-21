@@ -1,6 +1,7 @@
 #include "TransportBar.h"
 #include "../LookAndFeel/Palette.h"
 #include "../../Commands/CommandIDs.h"
+#include "MetronomePanel.h"
 
 namespace cdaw
 {
@@ -10,6 +11,17 @@ namespace cdaw
     {
         setTooltip (tip);
         setWantsKeyboardFocus (false);
+    }
+
+    void IconButton::mouseDown (const juce::MouseEvent& e)
+    {
+        if (e.mods.isPopupMenu() && onRightClick)
+        {
+            onRightClick();
+            return;
+        }
+
+        juce::Button::mouseDown (e);
     }
 
     void IconButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
@@ -146,6 +158,7 @@ namespace cdaw
     TransportBar::TransportBar (te::Edit& e, EditViewState& vs, juce::ApplicationCommandManager& cm)
         : edit (e), viewState (vs), commands (cm)
     {
+        setOpaque (true);   // paint() fills the whole component
         auto bindCommand = [this] (juce::Button& b, juce::CommandID id)
         {
             b.onClick = [this, id] { commands.invokeDirectly (id, true); };
@@ -159,6 +172,8 @@ namespace cdaw
         bindCommand (loopButton, CommandIDs::toggleLoop);
         bindCommand (punchButton, CommandIDs::togglePunch);
         bindCommand (clickButton, CommandIDs::toggleClick);
+        clickButton.setTooltip ("Metronome (C). Right-click for volume and sound.");
+        clickButton.onRightClick = [this] { MetronomePanel::show (edit, clickButton); };
         bindCommand (countInButton, CommandIDs::toggleCountIn);
         bindCommand (followButton, CommandIDs::toggleFollowPlayhead);
         bindCommand (snapButton, CommandIDs::toggleSnap);
@@ -241,9 +256,25 @@ namespace cdaw
         };
         addAndMakeVisible (writeAutoButton);
 
-        int id = 1;
-        for (auto& gd : EditViewState::getGridDivisions())
-            gridBox.addItem (gd.name, id++);
+        for (auto* b : { &mixerButton, &editorButton })
+        {
+            b->setColour (juce::TextButton::buttonOnColourId, Palette::accentDim);
+            b->setWantsKeyboardFocus (false);
+            addAndMakeVisible (b);
+        }
+
+        mixerButton.setTooltip ("Show / hide the mixer (F3)");
+        editorButton.setTooltip ("Show / hide the MIDI editor (Ctrl+E)");
+        mixerButton.onClick = [this] { commands.invokeDirectly (CommandIDs::toggleMixer, true); };
+        editorButton.onClick = [this] { commands.invokeDirectly (CommandIDs::toggleEditor, true); };
+
+        // "Adaptive" first, then the fixed divisions.
+        auto& grids = EditViewState::getGridDivisions();
+        gridBox.addItem ("Adaptive", EditViewState::getAdaptiveGridIndex() + 1);
+        gridBox.addSeparator();
+        for (int i = 0; i < grids.size(); ++i)
+            if (! grids.getReference (i).adaptive)
+                gridBox.addItem (grids.getReference (i).name, i + 1);
         gridBox.setTooltip ("Grid / snap resolution");
         gridBox.onChange = [this] { viewState.gridIndex = gridBox.getSelectedId() - 1; };
         addAndMakeVisible (gridBox);
@@ -263,6 +294,8 @@ namespace cdaw
     void TransportBar::timerCallback()
     {
         updatePositionText();
+        mixerButton.setToggleState (isCommandTicked (CommandIDs::toggleMixer), juce::dontSendNotification);
+        editorButton.setToggleState (isCommandTicked (CommandIDs::toggleEditor), juce::dontSendNotification);
 
         if (triggerRefresh)
         {
@@ -271,13 +304,20 @@ namespace cdaw
         }
     }
 
-    void TransportBar::updatePositionText()
+    void TransportBar::updatePositionText (bool force)
     {
         auto& transport = edit.getTransport();
         auto pos = transport.getPosition();
 
         if (auto epc = transport.getCurrentPlaybackContext(); epc != nullptr && transport.isPlaying())
             pos = epc->getAudibleTimelineTime();
+
+        // Nothing moved and the zoom (which the "Adaptive" grid label follows) is the same: done.
+        if (! force && pos.inSeconds() == lastShownPosition && viewState.pixelsPerSecond.get() == lastShownZoom)
+            return;
+
+        lastShownPosition = pos.inSeconds();
+        lastShownZoom = viewState.pixelsPerSecond.get();
 
         auto bb = edit.tempoSequence.toBarsAndBeats (pos);
         auto beats = bb.beats.inBeats();
@@ -295,6 +335,17 @@ namespace cdaw
         if (timeLabel.getText() != timeText)
             timeLabel.setText (timeText, juce::dontSendNotification);
 
+        // Show what "Adaptive" currently means at this zoom.
+        if (viewState.isAdaptiveGrid())
+        {
+            auto label = "Adaptive (" + viewState.getGrid().name + ")";
+            if (gridBox.getText() != label)
+            {
+                gridBox.changeItemText (EditViewState::getAdaptiveGridIndex() + 1, label);
+                gridBox.setText (label, juce::dontSendNotification);
+            }
+        }
+
         // Tempo / signature can change while playing through a tempo map.
         if (! tempoField.isBeingEdited())
         {
@@ -309,6 +360,16 @@ namespace cdaw
             if (sigLabel.getText() != sigText)
                 sigLabel.setText (sigText, juce::dontSendNotification);
         }
+    }
+
+    bool TransportBar::isCommandTicked (juce::CommandID id) const
+    {
+        juce::ApplicationCommandInfo info (id);
+
+        if (commands.getTargetForCommand (id, info) != nullptr)
+            return (info.flags & juce::ApplicationCommandInfo::isTicked) != 0;
+
+        return false;
     }
 
     void TransportBar::refresh()
@@ -328,7 +389,7 @@ namespace cdaw
         for (int i = 0; i < toolButtons.size(); ++i)
             toolButtons[i]->setToggleState (viewState.tool.get() == i, juce::dontSendNotification);
 
-        updatePositionText();
+        updatePositionText (true);   // tempo / signature / grid may have changed
     }
 
     void TransportBar::paint (juce::Graphics& g)
@@ -375,13 +436,15 @@ namespace cdaw
         withCaption (tempoField, 76);
         withCaption (sigLabel, 66, 18);
         place (snapButton, 52);
-        withCaption (gridBox, 76, 18);
+        withCaption (gridBox, 130, 18);
 
         for (auto* b : toolButtons)
             place (*b, 32, 2);
 
         buttonRow.removeFromLeft (14);
         place (followButton, 34);
-        place (writeAutoButton, 34);
+        place (writeAutoButton, 34, 14);
+        place (mixerButton, 64);
+        place (editorButton, 64);
     }
 }

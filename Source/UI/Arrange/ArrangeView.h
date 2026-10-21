@@ -5,6 +5,7 @@
 #include "TrackHeader.h"
 #include "TrackLane.h"
 #include "AutomationLane.h"
+#include "ArrangerLane.h"
 #include "../Common/FlaggedAsyncUpdater.h"
 
 namespace cdaw
@@ -36,6 +37,11 @@ namespace cdaw
         void zoomTrackHeights (double factor);
         void scrollToTime (te::TimePosition);
         te::Track* getFirstSelectedTrack() const;
+
+        // Song sections
+        bool isArrangerShown() const;
+        void setArrangerShown (bool);
+        void addSectionAtPlayhead()                         { arranger->addSectionAtPlayhead(); }
 
         /** Called to open the editor for a clip (double-click). */
         std::function<void (te::Clip&)> onOpenClipEditor;
@@ -76,6 +82,7 @@ namespace cdaw
         EditViewState& viewState;
 
         TimeRuler ruler;
+        std::unique_ptr<ArrangerLane> arranger;
         juce::Component headersArea, lanesArea;
         std::unique_ptr<EmptyArea> emptyArea;
         std::unique_ptr<Overlay> overlay;

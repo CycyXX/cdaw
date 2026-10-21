@@ -7,12 +7,15 @@
 #include "Model/EditViewState.h"
 #include "Model/MixerOps.h"
 #include "Model/AutomationOps.h"
+#include "Model/ArrangerOps.h"
+#include "Engine/MasterAnalyser.h"
 #include "Model/CompOps.h"
 #include "Model/ProjectSession.h"
 #include "Model/TrackOps.h"
 #include "UI/Arrange/ArrangeView.h"
 #include "UI/LookAndFeel/CDAWLookAndFeel.h"
 #include "UI/Mixer/MixerView.h"
+#include "UI/Mixer/SpectrumView.h"
 #include "UI/PianoRoll/PianoRoll.h"
 
 namespace cdaw::test
@@ -111,11 +114,36 @@ namespace cdaw::test
                     AutomationOps::showLane (*gtr, *vol);
                 }
 
+                // Song sections, and clip gain / fade shapes on the guitar clip.
+                ArrangerOps::addSection (edit, { te::TimePosition(), te::TimePosition::fromSeconds (2.0) }, "Intro");
+                ArrangerOps::addSection (edit, { te::TimePosition::fromSeconds (2.0), te::TimePosition::fromSeconds (6.0) }, "Verse");
+                ArrangerOps::addSection (edit, { te::TimePosition::fromSeconds (6.0), te::TimePosition::fromSeconds (12.0) }, "Chorus");
+
+                if (auto gclip = dynamic_cast<te::AudioClipBase*> (gtr->getClips().getFirst()))
+                {
+                    gclip->setGainDB (-4.5f);
+                    gclip->setFadeIn (te::TimeDuration::fromSeconds (1.0));
+                    gclip->setFadeInType (te::AudioFadeCurve::sCurve);
+                    gclip->setFadeOut (te::TimeDuration::fromSeconds (1.5));
+                    gclip->setFadeOutType (te::AudioFadeCurve::convex);
+                }
+
                 {
                     ArrangeView arrange (session, vs);
                     arrange.setBounds (0, 0, 1400, 700);
                     juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
                     save (arrange, "arrange");
+
+                    // Zoomed out: the ruler and grid thin out instead of turning into a solid block.
+                    for (double pps : { 6.0, 1.5, 0.3 })
+                    {
+                        vs.pixelsPerSecond = pps;
+                        arrange.resized();
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+                        save (arrange, "arrange_zoom_" + juce::String (pps, 1));
+                    }
+
+                    vs.pixelsPerSecond = 60.0;
                 }
 
                 {
@@ -138,9 +166,53 @@ namespace cdaw::test
                     mixer.setBounds (0, 0, 900, 460);
                     juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
                     save (mixer, "mixer");
+
+                    // A taller panel should lengthen the faders, not add empty space.
+                    mixer.setBounds (0, 0, 900, 760);
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+                    save (mixer, "mixer_tall");
+
+                    mixer.setBounds (0, 0, 900, 300);
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+                    save (mixer, "mixer_short");
+
+                    // Spectrum beside the master (empty offscreen), plus one fed a test signal.
+                    vs.state.setProperty (ViewIDs::showSpectrum, true, nullptr);
+                    mixer.setBounds (0, 0, 1300, 460);
+                    save (mixer, "mixer_spectrum");
+
+                    auto fifo = std::make_shared<AnalyserFifo>();
+                    SpectrumView spectrumView (fifo);
+                    spectrumView.setBounds (0, 0, 420, 300);
+                    fifo->active = true;
+                    juce::AudioBuffer<float> block (2, 4800);
+                    juce::Random rng (7);
+
+                    for (int pass = 0; pass < 6; ++pass)
+                    {
+                        for (int i = 0; i < block.getNumSamples(); ++i)
+                        {
+                            auto t = (pass * block.getNumSamples() + i) / 48000.0;
+                            auto s = 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 110.0 * t)
+                                   + 0.2f * (float) std::sin (juce::MathConstants<double>::twoPi * 1760.0 * t)
+                                   + 0.02f * (rng.nextFloat() * 2.0f - 1.0f);
+                            block.setSample (0, i, s);
+                            block.setSample (1, i, s);
+                        }
+
+                        fifo->push (block);
+                    }
+
+                    // One update with a full history (frames with a half-empty history show the
+                    // silence-to-tone step, which takes a moment of real time to fall away).
+                    spectrumView.update();
+                    save (spectrumView, "spectrum");
                 }
 
                 juce::ignoreUnused (fx);
+
+                // Kept, so the demo can be opened in the app (e.g. for the README screenshots).
+                session.save();
             }
 
             juce::LookAndFeel::setDefaultLookAndFeel (nullptr);

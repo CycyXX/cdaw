@@ -1,12 +1,39 @@
 #include "CrashHandler.h"
 #include "AppSettings.h"
 
+#if JUCE_WINDOWS
+ #include <windows.h>
+#endif
+
 namespace cdaw::CrashHandler
 {
     static juce::File getLockFile()           { return AppSettings::getSettingsFolder().getChildFile ("session.lock"); }
     static juce::File getCrashedPluginsFile() { return AppSettings::getCrashFolder().getChildFile ("crashed_plugins.txt"); }
 
-    static void handleCrash (void*)
+    /** Name of the module (exe or DLL) that contains the faulting instruction. */
+    static juce::String describeFaultingModule (void* exceptionPointers)
+    {
+       #if JUCE_WINDOWS
+        if (auto* ep = static_cast<EXCEPTION_POINTERS*> (exceptionPointers); ep != nullptr && ep->ExceptionRecord != nullptr)
+        {
+            auto* address = ep->ExceptionRecord->ExceptionAddress;
+            HMODULE module = nullptr;
+
+            if (GetModuleHandleExW (GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                    (LPCWSTR) address, &module) && module != nullptr)
+            {
+                wchar_t path[MAX_PATH] = {};
+                GetModuleFileNameW (module, path, MAX_PATH);
+                return juce::String (path) + "  (code 0x" + juce::String::toHexString ((int) ep->ExceptionRecord->ExceptionCode)
+                       + ", offset 0x" + juce::String::toHexString ((juce::pointer_sized_int) ((char*) address - (char*) module)) + ")";
+            }
+        }
+       #endif
+        juce::ignoreUnused (exceptionPointers);
+        return "unknown";
+    }
+
+    static void handleCrash (void* exceptionPointers)
     {
         // Keep this simple: we're in an unknown state.
         auto report = AppSettings::getCrashFolder()
@@ -28,7 +55,7 @@ namespace cdaw::CrashHandler
                 getCrashedPluginsFile().replaceWithText (plugins.joinIntoString ("\n"));
         }
 
-        juce::Logger::writeToLog ("CRASH - report written to " + report.getFullPathName());
+        juce::Logger::writeToLog ("CRASH in " + describeFaultingModule (exceptionPointers) + " - report written to " + report.getFullPathName());
     }
 
     void install()

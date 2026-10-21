@@ -14,6 +14,9 @@ namespace cdaw
 
         IconButton (Icon, juce::Colour onColour, const juce::String& tooltip);
         void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+        void mouseDown (const juce::MouseEvent&) override;
+
+        std::function<void()> onRightClick;
 
     private:
         Icon icon;
@@ -51,12 +54,18 @@ namespace cdaw
 
     private:
         void changeListenerCallback (juce::ChangeBroadcaster*) override  { refresh(); }
-        void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override { triggerRefresh = true; }
+        void valueTreePropertyChanged (juce::ValueTree& v, const juce::Identifier& id) override
+        {
+            // Tracktion writes the play position into the edit ~50 times a second; the position
+            // display has its own timer, so that alone needs no refresh.
+            if (! (id == te::IDs::position && v.hasType (te::IDs::TRANSPORT)))
+                triggerRefresh = true;
+        }
         void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override             { triggerRefresh = true; }
         void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int) override      { triggerRefresh = true; }
         void timerCallback() override;
         void refresh();
-        void updatePositionText();
+        void updatePositionText (bool force = false);
 
         te::Edit& edit;
         EditViewState& viewState;
@@ -74,11 +83,13 @@ namespace cdaw
                    snapButton    { IconButton::Icon::snap,    juce::Colour (0xff4fa3ff), "Snap to grid (J)" };
 
         juce::OwnedArray<IconButton> toolButtons;
-        juce::TextButton writeAutoButton { "W" };
+        juce::TextButton writeAutoButton { "W" }, mixerButton { "Mixer" }, editorButton { "Editor" };
+        bool isCommandTicked (juce::CommandID) const;
 
         juce::Label barsBeatsLabel, timeLabel, sigLabel;
         DragNumberField tempoField;
         juce::ComboBox gridBox;
         bool triggerRefresh = false;
+        double lastShownPosition = -1.0, lastShownZoom = -1.0;
     };
 }

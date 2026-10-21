@@ -78,6 +78,41 @@ namespace cdaw::test
                 expect (outDir.getChildFile ("stem2.wav").existsAsFile());
             }
 
+            beginTest ("A muted track is left out of the mixdown");
+            {
+                auto rmsOfExport = [&] (const juce::File& dest)
+                {
+                    juce::AudioFormatManager fm;
+                    fm.registerBasicFormats();
+                    auto reader = std::unique_ptr<juce::AudioFormatReader> (fm.createReaderFor (dest));
+
+                    if (reader == nullptr)
+                        return -1.0f;
+
+                    juce::AudioBuffer<float> buf (1, (int) reader->sampleRate);   // 1.5 .. 2.5 s: both tracks play
+                    reader->read (&buf, 0, buf.getNumSamples(), (juce::int64) (reader->sampleRate * 1.5), true, false);
+                    return buf.getRMSLevel (0, 0, buf.getNumSamples());
+                };
+
+                ExportService::Options o;
+                o.tailSeconds = 0.0;
+                o.dither = false;
+                juce::StringArray results;
+
+                auto both = outDir.getChildFile ("mute_both.wav");
+                expect (runJob ({ { ExportService::makeParameters (*edit, o, both, {}), "Both" } }, results));
+
+                t2->setMute (true);
+                auto oneMuted = outDir.getChildFile ("mute_one.wav");
+                expect (runJob ({ { ExportService::makeParameters (*edit, o, oneMuted, {}), "Muted" } }, results));
+                t2->setMute (false);
+
+                auto rmsBoth = rmsOfExport (both), rmsMuted = rmsOfExport (oneMuted);
+                logMessage ("Mixdown RMS with both tracks " + juce::String (rmsBoth, 4) + ", with track 2 muted " + juce::String (rmsMuted, 4));
+                expectWithinAbsoluteError (rmsMuted, 0.25f / std::sqrt (2.0f), 0.02f);
+                expectGreaterThan (rmsBoth, rmsMuted * 1.2f);
+            }
+
             beginTest ("MIDI export round trip");
             {
                 auto midiEdit = te::test_utilities::createTestEdit (engine, 1);

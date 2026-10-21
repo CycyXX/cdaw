@@ -13,6 +13,15 @@ namespace cdaw
 
         /** Calls fn (barNumber (1-based), time) for each bar start in the visible range. */
         void forEachBar (const EditViewState&, double widthPx, const std::function<void (int, te::TimePosition)>& fn);
+
+        /** The same, for the bars between two x positions (bar containing fromX first). */
+        void forEachBar (const EditViewState&, double fromX, double toX, const std::function<void (int, te::TimePosition)>& fn);
+
+        /** Width of one bar at the left edge of the view, in pixels. */
+        double pixelsPerBar (const EditViewState&);
+
+        /** Smallest power-of-two bar count (1, 2, 4 ...) that spans at least minPixels. */
+        int barStep (double pxPerBar, double minPixels);
     }
 
     /** Ruler with three zones:
@@ -36,9 +45,11 @@ namespace cdaw
         static constexpr int loopZoneHeight = 13;
 
     private:
-        void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override  { repaint(); }
-        void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override             { repaint(); }
-        void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int) override      { repaint(); }
+        static bool affectsRuler (const juce::ValueTree&, const juce::Identifier&);
+        void valueTreePropertyChanged (juce::ValueTree& v, const juce::Identifier& id) override  { if (affectsRuler (v, id)) itemsChanged(); }
+        void valueTreeChildAdded (juce::ValueTree& p, juce::ValueTree& c) override                 { if (affectsRuler (c, {}) || affectsRuler (p, {})) itemsChanged(); }
+        void valueTreeChildRemoved (juce::ValueTree& p, juce::ValueTree& c, int) override          { if (affectsRuler (c, {}) || affectsRuler (p, {})) itemsChanged(); }
+        void itemsChanged()                                                                         { itemsDirty = true; repaint(); }
 
         struct Item
         {
@@ -49,6 +60,13 @@ namespace cdaw
         };
 
         std::vector<Item> layoutItems() const;
+
+        /** layoutItems(), cached: measuring the labels on every playhead repaint adds up. */
+        const std::vector<Item>& getItems() const;
+        mutable std::vector<Item> itemCache;
+        mutable bool itemsDirty = true;
+        mutable double cachedViewStart = -1.0, cachedZoom = -1.0;
+        mutable int cachedWidth = -1;
         const Item* itemAt (juce::Point<int>) const;
         void showItemMenu (const Item&);
         void showStripMenu (te::TimePosition);

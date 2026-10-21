@@ -14,6 +14,8 @@
 #include "../UI/LowerZone.h"
 #include "../UI/Export/ExportDialog.h"
 #include "../UI/Settings/PreferencesDialog.h"
+#include "../UI/Transport/MetronomePanel.h"
+#include "../UI/Transport/TransportBar.h"
 
 namespace cdaw
 {
@@ -23,17 +25,19 @@ namespace cdaw
             CommandIDs::newProject, CommandIDs::openProject, CommandIDs::saveProject, CommandIDs::saveProjectAs,
             CommandIDs::revealProjectFolder, CommandIDs::showAudioSettings, CommandIDs::showPreferences, CommandIDs::importAudio,
             CommandIDs::importMidi, CommandIDs::exportMixdown, CommandIDs::exportStems, CommandIDs::exportMidi,
+            CommandIDs::importDawProject, CommandIDs::exportDawProject,
             juce::StandardApplicationCommandIDs::quit,
 
             CommandIDs::undo, CommandIDs::redo, CommandIDs::deleteSelection, CommandIDs::duplicate,
             CommandIDs::selectAll, CommandIDs::deselectAll, CommandIDs::splitAtCursor, CommandIDs::muteClips,
             CommandIDs::deleteRangeCloseGap, CommandIDs::nudgeLeft, CommandIDs::nudgeRight,
             CommandIDs::toggleSnap, CommandIDs::gridFiner, CommandIDs::gridCoarser,
+            CommandIDs::crossfadeClips, CommandIDs::toggleClipLoop, CommandIDs::resetClipGain, CommandIDs::addSection,
 
             CommandIDs::playStop, CommandIDs::stop, CommandIDs::record, CommandIDs::abortRecording,
             CommandIDs::returnToStart, CommandIDs::gotoEnd, CommandIDs::toggleLoop, CommandIDs::togglePunch,
             CommandIDs::toggleClick, CommandIDs::toggleCountIn, CommandIDs::toggleFollowPlayhead,
-            CommandIDs::setLoopToSelection, CommandIDs::addMarker, CommandIDs::nextMarker, CommandIDs::prevMarker,
+            CommandIDs::setLoopToSelection, CommandIDs::addMarker, CommandIDs::nextMarker, CommandIDs::prevMarker, CommandIDs::toggleReturnOnStop, CommandIDs::metronomeSettings,
 
             CommandIDs::zoomIn, CommandIDs::zoomOut, CommandIDs::zoomToFit,
             CommandIDs::zoomInVertical, CommandIDs::zoomOutVertical,
@@ -47,7 +51,8 @@ namespace cdaw
             CommandIDs::toolDraw, CommandIDs::toolErase, CommandIDs::toolMute,
 
             CommandIDs::openPluginFromFile, CommandIDs::showPluginManager, CommandIDs::toggleInspector,
-            CommandIDs::toggleEditor, CommandIDs::toggleMixer, CommandIDs::toggleAutomation
+            CommandIDs::toggleEditor, CommandIDs::toggleMixer, CommandIDs::toggleAutomation,
+            CommandIDs::toggleArranger, CommandIDs::toggleSpectrum
         };
 
         c.addArray (ids, juce::numElementsInArray (ids));
@@ -59,8 +64,16 @@ namespace cdaw
         const bool hasSession = s != nullptr;
         auto* sm = hasSession ? &s->getSelectionManager() : nullptr;
         auto* vs = hasSession ? &s->getViewState() : nullptr;
-        const bool hasClips = sm != nullptr && ! ClipOps::getSelectedClips (*sm).isEmpty();
-        const bool hasTrack = arrangeView != nullptr && arrangeView->getFirstSelectedTrack() != nullptr;
+        // Worked out only for the commands that ask (this runs for every command, often).
+        struct Lazy
+        {
+            std::function<bool()> compute;
+            mutable std::optional<bool> value;
+            operator bool() const     { if (! value) value = compute(); return *value; }
+        };
+
+        const Lazy hasClips { [sm] { return sm != nullptr && ! ClipOps::getSelectedClips (*sm).isEmpty(); } };
+        const Lazy hasTrack { [this] { return arrangeView != nullptr && arrangeView->getFirstSelectedTrack() != nullptr; } };
         const bool hasRange = vs != nullptr && vs->hasRange();
 
         using KP = juce::KeyPress;
@@ -88,6 +101,8 @@ namespace cdaw
             case CommandIDs::importMidi:          set ("Import MIDI File...", "Import a MIDI file at the playhead", CommandCategories::file, hasSession); info.addDefaultKeypress ('i', ctrl | shift); break;
             case CommandIDs::exportMixdown:       set ("Export Mixdown...", "Render the mix to an audio file", CommandCategories::file, hasSession); info.addDefaultKeypress ('e', ctrl | shift); break;
             case CommandIDs::exportStems:         set ("Export Stems...", "Render each track to its own file", CommandCategories::file, hasSession); break;
+            case CommandIDs::importDawProject:    set ("Import DAWproject...", "Open a .dawproject (Cubase, Bitwig, Studio One...) as a new CDAW project", CommandCategories::file, true); break;
+            case CommandIDs::exportDawProject:    set ("Export DAWproject...", "Save this project as a .dawproject for other DAWs", CommandCategories::file, hasSession); break;
             case CommandIDs::exportMidi:          set ("Export MIDI File...", "Write selected (or all) MIDI clips to a .mid file", CommandCategories::file, hasSession); break;
             case juce::StandardApplicationCommandIDs::quit:
                 set ("Exit", "Quit CDAW", CommandCategories::file);
@@ -124,6 +139,10 @@ namespace cdaw
                 break;
             case CommandIDs::gridFiner:           set ("Finer Grid", "Smaller grid step", CommandCategories::edit, hasSession); info.addDefaultKeypress (']', 0); break;
             case CommandIDs::gridCoarser:         set ("Coarser Grid", "Larger grid step", CommandCategories::edit, hasSession); info.addDefaultKeypress ('[', 0); break;
+            case CommandIDs::crossfadeClips:      set ("Crossfade", "Crossfade the selected audio clip(s) with the clips they touch", CommandCategories::edit, hasClips); info.addDefaultKeypress ('x', shift); break;
+            case CommandIDs::toggleClipLoop:      set ("Loop Clip", "Loop the selected MIDI clips so extending them repeats the content", CommandCategories::edit, hasClips); info.addDefaultKeypress ('l', shift); break;
+            case CommandIDs::resetClipGain:       set ("Reset Clip Gain", "Set the gain of the selected audio clips back to 0 dB", CommandCategories::edit, hasClips); break;
+            case CommandIDs::addSection:          set ("Add Song Section", "Add a section (Intro, Verse, Chorus ...) at the playhead or over the loop range", CommandCategories::edit, hasSession); break;
 
             // Transport
             case CommandIDs::playStop:            set ("Play / Stop", "Start or stop playback", CommandCategories::transport, hasSession); info.addDefaultKeypress (KP::spaceKey, 0); break;
@@ -160,6 +179,13 @@ namespace cdaw
                 set ("Follow Playhead", "Scroll the view during playback", CommandCategories::transport, hasSession);
                 info.setTicked (vs != nullptr && vs->followPlayhead.get());
                 info.addDefaultKeypress ('f', 0);
+                break;
+            case CommandIDs::metronomeSettings:
+                set ("Metronome Settings...", "Click volume, sound and output", CommandCategories::transport, hasSession);
+                break;
+            case CommandIDs::toggleReturnOnStop:
+                set ("Return to Start Position on Stop", "When stopping, move the cursor back to where playback or recording started", CommandCategories::transport, hasSession);
+                info.setTicked (AppContext::get().settings.getBool (SettingKeys::returnOnStop, true));
                 break;
             case CommandIDs::addMarker:           set ("Add Marker", "Add a marker at the playhead", CommandCategories::transport, hasSession); info.addDefaultKeypress ('m', ctrl); break;
             case CommandIDs::nextMarker:          set ("Next Marker", "Jump to the next marker", CommandCategories::transport, hasSession); info.addDefaultKeypress (KP::rightKey, alt); break;
@@ -209,6 +235,14 @@ namespace cdaw
                 set ("Show / Hide Automation", "Toggle automation lanes on the selected tracks", CommandCategories::view, hasTrack);
                 info.addDefaultKeypress ('a', 0);
                 break;
+            case CommandIDs::toggleArranger:
+                set ("Arranger Track", "Show / hide the song-section strip under the ruler", CommandCategories::view, hasSession);
+                info.setTicked (arrangeView != nullptr && arrangeView->isArrangerShown());
+                break;
+            case CommandIDs::toggleSpectrum:
+                set ("Spectrum Analyser", "Show / hide the master output spectrum next to the mixer's master strip", CommandCategories::view, hasSession);
+                info.setTicked (vs != nullptr && (bool) vs->state.getProperty (ViewIDs::showSpectrum, false));
+                break;
             case CommandIDs::toggleInspector:
                 set ("Inspector", "Show / hide the track inspector", CommandCategories::view, hasSession);
                 info.setTicked (showInspector);
@@ -220,6 +254,46 @@ namespace cdaw
             case CommandIDs::openPluginFromFile: set ("Open Plugin From File...", "Load a VST3 directly onto the selected track", CommandCategories::plugins, hasSession); break;
 
             default: break;
+        }
+    }
+
+    void MainComponent::startPlayback (bool record)
+    {
+        auto* s = getSession();
+        if (s == nullptr)
+            return;
+
+        auto& transport = s->getTransport();
+        playStartPosition = transport.getPosition();
+
+        if (record)
+        {
+            transport.record (false, false);
+
+            if (! transport.isRecording())
+                statusBar->showMessage ("Nothing to record: record-enable a track with an input first (R).");
+        }
+        else
+        {
+            transport.play (false);
+        }
+    }
+
+    void MainComponent::stopPlayback (bool discard)
+    {
+        auto* s = getSession();
+        if (s == nullptr)
+            return;
+
+        auto& transport = s->getTransport();
+        transport.stop (discard, false);
+
+        if (AppContext::get().settings.getBool (SettingKeys::returnOnStop, true))
+        {
+            transport.setPosition (playStartPosition);
+
+            if (arrangeView != nullptr)
+                arrangeView->scrollToTime (playStartPosition);
         }
     }
 
@@ -295,6 +369,8 @@ namespace cdaw
             case CommandIDs::exportMixdown:       transport.stop (false, false); ExportDialog::show (*s, false); return true;
             case CommandIDs::exportStems:         transport.stop (false, false); ExportDialog::show (*s, true); return true;
             case CommandIDs::exportMidi:          exportMidiDialog(); return true;
+            case CommandIDs::importDawProject:    importDawProjectDialog(); return true;
+            case CommandIDs::exportDawProject:    exportDawProjectDialog(); return true;
 
             case CommandIDs::undo:                edit.undo(); return true;
             case CommandIDs::redo:                edit.redo(); return true;
@@ -355,37 +431,82 @@ namespace cdaw
             }
 
             case CommandIDs::toggleSnap:   vs.snapEnabled = ! vs.snapEnabled.get(); return true;
-            case CommandIDs::gridFiner:    vs.gridIndex = juce::jlimit (0, EditViewState::getGridDivisions().size() - 1, vs.gridIndex.get() + 1); return true;
-            case CommandIDs::gridCoarser:  vs.gridIndex = juce::jlimit (0, EditViewState::getGridDivisions().size() - 1, vs.gridIndex.get() - 1); return true;
+
+            case CommandIDs::crossfadeClips:
+            {
+                um.beginNewTransaction ("Crossfade");
+                auto made = ClipOps::crossfadeClips (ClipOps::getSelectedClips (sm), te::TimeDuration::fromSeconds (ClipOps::defaultCrossfadeSeconds));
+                statusBar->showMessage (made > 0 ? "Crossfaded " + juce::String (made) + " join(s) - drag the fade handles to lengthen"
+                                                 : juce::String ("Select audio clips that touch each other to crossfade them"));
+                return true;
+            }
+
+            case CommandIDs::toggleClipLoop:
+            {
+                auto clips = ClipOps::getSelectedClips (sm);
+                const bool allLooping = std::all_of (clips.begin(), clips.end(), [] (te::Clip* c) { return c->isLooping(); });
+                um.beginNewTransaction ("Loop clip");
+                for (auto c : clips)
+                    if (ClipOps::canToggleLoop (*c))
+                        ClipOps::setLooping (*c, ! allLooping);
+                return true;
+            }
+
+            case CommandIDs::resetClipGain:
+                um.beginNewTransaction ("Reset clip gain");
+                for (auto c : ClipOps::getSelectedClips (sm))
+                    if (auto ac = dynamic_cast<te::AudioClipBase*> (c))
+                        ac->setGainDB (0.0f);
+                return true;
+
+            case CommandIDs::addSection:
+                if (arrangeView != nullptr)
+                {
+                    if (! arrangeView->isArrangerShown())
+                        arrangeView->setArrangerShown (true);
+                    arrangeView->addSectionAtPlayhead();
+                }
+                return true;
+            case CommandIDs::gridFiner:
+            case CommandIDs::gridCoarser:
+            {
+                // Step through the straight divisions Bar .. 1/32 (index 0..5), starting from what's showing now.
+                auto current = vs.isAdaptiveGrid() ? EditViewState::findGridIndex (vs.getGrid().name) : vs.gridIndex.get();
+                current = juce::jlimit (0, 5, current);
+                vs.gridIndex = juce::jlimit (0, 5, current + (info.commandID == CommandIDs::gridFiner ? 1 : -1));
+                return true;
+            }
 
             // Transport
             case CommandIDs::playStop:
-                if (transport.isPlaying() || transport.isRecording())  transport.stop (false, false);
-                else                                                   transport.play (false);
+                if (transport.isPlaying() || transport.isRecording())  stopPlayback (false);
+                else                                                   startPlayback (false);
                 return true;
 
             case CommandIDs::stop:
-                if (transport.isPlaying() || transport.isRecording())  transport.stop (false, false);
+                if (transport.isPlaying() || transport.isRecording())  stopPlayback (false);
                 else                                                   transport.setPosition (te::TimePosition());
                 return true;
 
             case CommandIDs::record:
                 if (transport.isRecording())
-                {
-                    transport.stop (false, false);
-                }
+                    stopPlayback (false);
                 else
-                {
-                    transport.record (false, false);
-
-                    if (! transport.isRecording())
-                        statusBar->showMessage ("Nothing to record: record-enable a track with an input first (R).");
-                }
+                    startPlayback (true);
                 return true;
 
             case CommandIDs::abortRecording:
-                transport.stop (true, false);
+                stopPlayback (true);
                 statusBar->showMessage ("Recording discarded");
+                return true;
+
+            case CommandIDs::metronomeSettings:
+                if (transportBar != nullptr)
+                    MetronomePanel::show (edit, *transportBar);
+                return true;
+
+            case CommandIDs::toggleReturnOnStop:
+                ctx.settings.setBool (SettingKeys::returnOnStop, ! ctx.settings.getBool (SettingKeys::returnOnStop, true));
                 return true;
 
             case CommandIDs::returnToStart:  transport.setPosition (te::TimePosition()); if (arrangeView) arrangeView->scrollToTime ({}); return true;
@@ -518,6 +639,20 @@ namespace cdaw
                 }
                 return true;
             case CommandIDs::toggleInspector:    showInspector = ! showInspector; resized(); return true;
+            case CommandIDs::toggleArranger:
+                if (arrangeView != nullptr)
+                    arrangeView->setArrangerShown (! arrangeView->isArrangerShown());
+                return true;
+            case CommandIDs::toggleSpectrum:
+            {
+                const bool show = ! (bool) vs.state.getProperty (ViewIDs::showSpectrum, false);
+                vs.state.setProperty (ViewIDs::showSpectrum, show, nullptr);
+
+                // The analyser lives beside the mixer's master strip, so bring the mixer up.
+                if (show && ! (showLowerZone && lowerZone != nullptr && lowerZone->getPage() == LowerZone::Page::mixer))
+                    setLowerZoneVisible (true, (int) LowerZone::Page::mixer);
+                return true;
+            }
             case CommandIDs::toggleEditor:
             case CommandIDs::toggleMixer:
             {

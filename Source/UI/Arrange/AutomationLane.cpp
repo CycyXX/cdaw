@@ -9,6 +9,7 @@ namespace cdaw
     AutomationLaneHeader::AutomationLaneHeader (ArrangeHost& h, te::Track::Ptr t, te::AutomatableParameter::Ptr p)
         : host (h), track (t), param (p)
     {
+        setOpaque (true);   // paint() fills the whole component
         paramButton.setButtonText (AutomationOps::getDisplayName (*param));
         paramButton.setTooltip ("Choose the parameter for this lane");
         paramButton.onClick = [this]
@@ -101,6 +102,7 @@ namespace cdaw
     AutomationLane::AutomationLane (ArrangeHost& h, te::Track::Ptr t, te::AutomatableParameter::Ptr p)
         : host (h), viewState (h.getViewState()), track (t), param (p)
     {
+        setOpaque (true);   // paint() fills the whole component
         param->addListener (this);
         viewState.state.addListener (this);
     }
@@ -171,11 +173,15 @@ namespace cdaw
         }
         else
         {
-            // Sample the curve per pixel so curved segments draw correctly.
+            // Sample the curve every 2 px so curved segments draw correctly, but only across the
+            // area being repainted (often just the playhead strip).
+            auto dirty = g.getClipBounds();
+            const float x0 = juce::jmax (0.0f, (float) dirty.getX() - 4.0f);
+            const float x1 = juce::jmin (w, (float) dirty.getRight() + 4.0f);
             juce::Path p;
             bool started = false;
 
-            for (float x = 0.0f; x <= w; x += 2.0f)
+            for (float x = x0; x <= x1 + 1.9f; x += 2.0f)
             {
                 auto t = viewState.xToTime (x);
                 auto y = valueToY (curve.getValueAt (t, param->getCurrentValue()));
@@ -185,8 +191,8 @@ namespace cdaw
             }
 
             juce::Path fill (p);
-            fill.lineTo (w, (float) getHeight());
-            fill.lineTo (0.0f, (float) getHeight());
+            fill.lineTo (p.getCurrentPosition().x, (float) getHeight());
+            fill.lineTo (x0, (float) getHeight());
             fill.closeSubPath();
             g.setColour (colour.withAlpha (0.12f));
             g.fillPath (fill);

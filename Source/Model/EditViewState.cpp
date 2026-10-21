@@ -14,7 +14,7 @@ namespace cdaw
         rangeStart.referTo (state, ViewIDs::rangeStart, nullptr, 0.0);
         rangeEnd.referTo (state, ViewIDs::rangeEnd, nullptr, 0.0);
         scrollY.referTo (state, ViewIDs::scrollY, nullptr, 0);
-        gridIndex.referTo (state, ViewIDs::gridIndex, nullptr, 2);   // 1/4
+        gridIndex.referTo (state, ViewIDs::gridIndex, nullptr, getAdaptiveGridIndex());
         tool.referTo (state, ViewIDs::tool, nullptr, (int) Tool::select);
         snapEnabled.referTo (state, ViewIDs::snapEnabled, nullptr, true);
         followPlayhead.referTo (state, ViewIDs::followPlayhead, nullptr, true);
@@ -32,14 +32,62 @@ namespace cdaw
             GridDivision { "1/4T",   0.25 * 2 / 3,    true  },
             GridDivision { "1/8T",   0.125 * 2 / 3,   true  },
             GridDivision { "1/16T",  0.0625 * 2 / 3,  true  },
+            GridDivision { "Adaptive", 0.0,           false, 1, true },
         };
         return grids;
     }
 
-    GridDivision EditViewState::getGrid() const
+    int EditViewState::getAdaptiveGridIndex()   { return getGridDivisions().size() - 1; }
+
+    int EditViewState::findGridIndex (const juce::String& name)
     {
         auto& grids = getGridDivisions();
-        return grids[juce::jlimit (0, grids.size() - 1, gridIndex.get())];
+        for (int i = 0; i < grids.size(); ++i)
+            if (grids.getReference (i).name == name)
+                return i;
+        return 0;
+    }
+
+    bool EditViewState::isAdaptiveGrid() const
+    {
+        return gridIndex.get() == getAdaptiveGridIndex();
+    }
+
+    GridDivision EditViewState::resolveGrid (double pixelsPerBeat) const
+    {
+        auto& grids = getGridDivisions();
+        auto chosen = grids[juce::jlimit (0, grids.size() - 1, gridIndex.get())];
+
+        if (! chosen.adaptive)
+            return chosen;
+
+        // Finest division that is still at least ~16 px wide.
+        constexpr double minPixels = 16.0;
+        auto& sig = edit.tempoSequence.getTimeSigAt (xToTime (0.0));
+        const int den = juce::jmax (1, sig.denominator.get());
+        const int num = juce::jmax (1, sig.numerator.get());
+
+        for (double whole : { 0.03125, 0.0625, 0.125, 0.25, 0.5 })
+        {
+            auto beats = whole * den;
+            if (beats < num && beats * pixelsPerBeat >= minPixels)
+            {
+                auto name = "1/" + juce::String (juce::roundToInt (1.0 / whole));
+                return GridDivision { name, whole, false, 1, false };
+            }
+        }
+
+        for (int bars : { 1, 2, 4, 8, 16, 32, 64 })
+            if (bars * num * pixelsPerBeat >= minPixels)
+                return GridDivision { bars == 1 ? juce::String ("Bar") : juce::String (bars) + " bars", 0.0, false, bars, false };
+
+        return GridDivision { "64 bars", 0.0, false, 64, false };
+    }
+
+    GridDivision EditViewState::getGrid() const
+    {
+        auto secondsPerBeat = 1.0 / juce::jmax (0.0001, edit.tempoSequence.getBeatsPerSecondAt (xToTime (0.0), true));
+        return resolveGrid (pixelsPerSecond.get() * secondsPerBeat);
     }
 
     te::TimePosition EditViewState::snap (te::TimePosition t) const
@@ -54,9 +102,11 @@ namespace cdaw
 
         if (grid.wholeNotes <= 0.0)
         {
+            const int n = juce::jmax (1, grid.bars);
             auto bb = ts.toBarsAndBeats (t);
-            auto barStart = ts.toTime (te::tempo::BarsAndBeats { bb.bars, {} });
-            auto nextBar = ts.toTime (te::tempo::BarsAndBeats { bb.bars + 1, {} });
+            auto first = (bb.bars / n) * n;
+            auto barStart = ts.toTime (te::tempo::BarsAndBeats { first, {} });
+            auto nextBar = ts.toTime (te::tempo::BarsAndBeats { first + n, {} });
             return (t - barStart) < (nextBar - t) ? barStart : nextBar;
         }
 
@@ -74,7 +124,7 @@ namespace cdaw
         auto grid = getGrid();
         auto denominator = juce::jmax (1, ts.getTimeSigAt (at).denominator.get());
         auto numerator = juce::jmax (1, ts.getTimeSigAt (at).numerator.get());
-        auto gridBeats = grid.wholeNotes <= 0.0 ? (double) numerator : grid.wholeNotes * denominator;
+        auto gridBeats = grid.wholeNotes <= 0.0 ? (double) (numerator * juce::jmax (1, grid.bars)) : grid.wholeNotes * denominator;
         auto start = ts.toBeats (at);
         return ts.toTime (start + te::BeatDuration::fromBeats (gridBeats)) - ts.toTime (start);
     }

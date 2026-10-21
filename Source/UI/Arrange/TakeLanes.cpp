@@ -7,6 +7,7 @@ namespace cdaw
     TakeLanes::TakeLanes (ArrangeHost& h, te::Track::Ptr t)
         : host (h), viewState (h.getViewState()), track (t)
     {
+        setOpaque (true);   // paint() fills the whole component
     }
 
     TakeLanes::~TakeLanes() = default;

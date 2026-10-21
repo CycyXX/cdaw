@@ -2,6 +2,7 @@
 
 #include "ArrangeHost.h"
 #include "../Common/LevelMeter.h"
+#include "../Common/PanKnob.h"
 
 namespace cdaw
 {
@@ -36,7 +37,13 @@ namespace cdaw
 
     private:
         void timerCallback() override;
-        void changeListenerCallback (juce::ChangeBroadcaster*) override   { repaint(); }
+        void changeListenerCallback (juce::ChangeBroadcaster*) override
+        {
+            // Selection: repaint only when this track's selected state flips.
+            auto selected = viewState.selectionManager.isSelected (track.get());
+            if (selected != lastSelected) { lastSelected = selected; repaint(); }
+        }
+        bool lastSelected = false;
         void refreshButtons();
         void showInputMenu();
         bool isOnResizeEdge (int y) const           { return y >= getHeight() - 5; }
@@ -51,7 +58,7 @@ namespace cdaw
                      armButton { "R", juce::Colour (0xffe5383b), "Record enable" },
                      monitorButton { "I", juce::Colour (0xff4fa3ff), "Input monitoring: Auto (follows record enable) / On / Off" };
         juce::TextButton inputButton, collapseButton;
-        juce::Slider volumeSlider, panSlider;
+        PanKnob panSlider;
         LevelMeter meter;
 
         bool resizing = false;

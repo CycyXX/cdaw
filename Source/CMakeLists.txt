@@ -5,8 +5,14 @@ file(GLOB_RECURSE CDAW_LIB_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
 list(REMOVE_ITEM CDAW_LIB_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/App/Main.cpp")
 
+# Images compiled into the exe (splash screen logo).
+juce_add_binary_data(cdaw_binary
+    NAMESPACE CDAWBinary
+    HEADER_NAME CDAWBinary.h
+    SOURCES "${CMAKE_SOURCE_DIR}/resources/logo/splash_logo.png")
+
 add_library(cdaw_lib STATIC ${CDAW_LIB_SOURCES})
-target_link_libraries(cdaw_lib PUBLIC cdaw_modules)
+target_link_libraries(cdaw_lib PUBLIC cdaw_modules cdaw_binary)
 target_include_directories(cdaw_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_precompile_headers(cdaw_lib PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/PCH.h")
 cdaw_apply_compile_options(cdaw_lib)
@@ -17,7 +23,9 @@ juce_add_gui_app(CDAW
     PRODUCT_NAME "CDAW"
     COMPANY_NAME "Cyrill Durrer"
     VERSION ${PROJECT_VERSION}
-    DOCUMENT_EXTENSIONS tracktionedit
+    DOCUMENT_EXTENSIONS cdaw
+    ICON_BIG "${CMAKE_SOURCE_DIR}/resources/logo/cdaw-logo-1024.png"
+    ICON_SMALL "${CMAKE_SOURCE_DIR}/resources/logo/cdaw-logo-small.png"
     NEEDS_CURL FALSE
     NEEDS_WEB_BROWSER FALSE)
 

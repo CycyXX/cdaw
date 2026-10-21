@@ -20,6 +20,8 @@ namespace cdaw
             exportMixdown,
             exportStems,
             exportMidi,
+            importDawProject,
+            exportDawProject,
             showPreferences,
             showAudioSettings,
             revealProjectFolder,
@@ -50,6 +52,10 @@ namespace cdaw
             gridCoarser,
             colourSelection,
             bounceInPlace,
+            crossfadeClips,
+            toggleClipLoop,
+            resetClipGain,
+            addSection,
 
             // Transport
             playStop = 0x23000,
@@ -71,6 +77,8 @@ namespace cdaw
             prevMarker,
             abortRecording,
             toggleRetroRecord,
+            toggleReturnOnStop,
+            metronomeSettings,
 
             // View
             zoomIn = 0x24000,
@@ -84,6 +92,8 @@ namespace cdaw
             toggleInspector,
             toggleTakeLanes,
             toggleAutomation,
+            toggleArranger,
+            toggleSpectrum,
 
             // Track
             addAudioTrack = 0x25000,

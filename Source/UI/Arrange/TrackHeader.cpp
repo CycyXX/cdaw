@@ -40,6 +40,7 @@ namespace cdaw
     TrackHeader::TrackHeader (ArrangeHost& h, te::Track::Ptr t)
         : host (h), viewState (h.getViewState()), track (t)
     {
+        setOpaque (true);   // paint() fills the whole component
         nameLabel.setText (track->getName(), juce::dontSendNotification);
         nameLabel.setEditable (false, true, false);
         nameLabel.setFont (juce::FontOptions (13.5f, juce::Font::bold));
@@ -128,28 +129,7 @@ namespace cdaw
 
         if (auto vp = getVolumePlugin (*track))
         {
-            volumeSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-            volumeSlider.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
-            volumeSlider.setRange (0.0, 1.0);
-            volumeSlider.setDoubleClickReturnValue (true, te::decibelsToVolumeFaderPosition (0.0f));
-            volumeSlider.setTooltip ("Volume");
-            volumeSlider.onDragStart = [vp] { vp->volParam->parameterChangeGestureBegin(); };
-            volumeSlider.onDragEnd = [vp] { vp->volParam->parameterChangeGestureEnd(); };
-            volumeSlider.onValueChange = [this, vp]
-            {
-                if (! updatingSliders)
-                {
-                    vp->setSliderPos ((float) volumeSlider.getValue());
-                    volumeSlider.setTooltip (juce::Decibels::toString (vp->getVolumeDb(), 1));
-                }
-            };
-            addAndMakeVisible (volumeSlider);
-
-            panSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-            panSlider.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
-            panSlider.setRange (-1.0, 1.0);
-            panSlider.setDoubleClickReturnValue (true, 0.0);
-            panSlider.setTooltip ("Pan");
+            // Volume lives in the mixer only (a fader here was too easy to nudge by accident).
             panSlider.onDragStart = [vp] { vp->panParam->parameterChangeGestureBegin(); };
             panSlider.onDragEnd = [vp] { vp->panParam->parameterChangeGestureEnd(); };
             panSlider.onValueChange = [this, vp] { if (! updatingSliders) vp->setPan ((float) panSlider.getValue()); };
@@ -185,14 +165,15 @@ namespace cdaw
 
         if (auto at = dynamic_cast<te::AudioTrack*> (track.get()))
         {
+            // One input lookup per tick (each walks the edit's input devices).
             auto input = TrackOps::getAssignedInput (*at);
-            armButton.setToggleState (TrackOps::isArmed (*at), juce::dontSendNotification);
+            armButton.setToggleState (input != nullptr && input->isRecordingEnabled (at->itemID), juce::dontSendNotification);
             armButton.setAlpha (input != nullptr ? 1.0f : 0.5f);
 
             using MM = te::InputDevice::MonitorMode;
-            auto mode = TrackOps::getMonitorMode (*at);
+            auto mode = input != nullptr ? input->getInputDevice().getMonitorMode() : MM::automatic;
             monitorButton.setButtonText (mode == MM::automatic ? "A" : "I");
-            monitorButton.setToggleState (mode == MM::on || (mode == MM::automatic && TrackOps::isMonitoringLive (*at)),
+            monitorButton.setToggleState (mode == MM::on || (mode == MM::automatic && input != nullptr && input->isLivePlayEnabled (*at)),
                                           juce::dontSendNotification);
             monitorButton.setAlpha (input != nullptr ? 1.0f : 0.5f);
 
@@ -205,8 +186,6 @@ namespace cdaw
         {
             juce::ScopedValueSetter<bool> svs (updatingSliders, true);
 
-            if (! volumeSlider.isMouseButtonDown())
-                volumeSlider.setValue (vp->getSliderPos(), juce::dontSendNotification);
             if (! panSlider.isMouseButtonDown())
                 panSlider.setValue (vp->getPan(), juce::dontSendNotification);
         }
@@ -312,15 +291,13 @@ namespace cdaw
             inputButton.setBounds (row.withTrimmedLeft (4));
 
         const bool roomForMix = r.getHeight() >= 20;
-        volumeSlider.setVisible (roomForMix && getVolumePlugin (*track) != nullptr);
         panSlider.setVisible (roomForMix && getVolumePlugin (*track) != nullptr);
 
         if (roomForMix)
         {
             r.removeFromTop (3);
             auto mix = r.removeFromTop (20);
-            panSlider.setBounds (mix.removeFromRight (22));
-            volumeSlider.setBounds (mix);
+            panSlider.setBounds (mix.removeFromLeft (PanKnob::widthForHeight (mix.getHeight())));
         }
     }
 

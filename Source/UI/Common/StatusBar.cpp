@@ -6,6 +6,7 @@ namespace cdaw
 {
     StatusBar::StatusBar (te::Engine& e) : engine (e)
     {
+        setOpaque (true);
         startTimerHz (4);
         timerCallback();
     }
@@ -28,17 +29,24 @@ namespace cdaw
         auto newCpu = engine.getDeviceManager().getCpuUsage();
         auto newClipped = engine.getDeviceManager().hasOutputClipped (false);
 
+        bool changed = false;
+
         if (message.isNotEmpty() && juce::Time::getMillisecondCounter() - messageTime > 6000)
+        {
             message = {};
+            changed = true;
+        }
 
         if (newDevice != device || std::abs (newCpu - cpu) > 0.005f || newClipped != clipped)
         {
             device = newDevice;
             cpu = newCpu;
             clipped = newClipped;
+            changed = true;
         }
 
-        repaint();
+        if (changed)
+            repaint();
     }
 
     void StatusBar::paint (juce::Graphics& g)

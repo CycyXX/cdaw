@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PCH.h"
+#include "Plugins/BuiltInPlugins.h"
 #include <future>
 #include <tracktion_engine/utilities/tracktion_TestUtilities.h>
 
@@ -32,9 +33,14 @@ namespace cdaw::test
         auto& e = engineHolder();
 
         if (e == nullptr)
+        {
             e = std::make_unique<te::Engine> (std::make_unique<te::PropertyStorage> ("CDAW_Tests"),
                                               std::make_unique<TestUIBehaviour>(),
                                               std::make_unique<TestEngineBehaviour>());
+
+            BuiltInPlugins::registerTypes (*e);
+        }
+
         return *e;
     }
 

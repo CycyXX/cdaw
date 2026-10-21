@@ -10,15 +10,19 @@ namespace cdaw
     TrackLane::TrackLane (ArrangeHost& h, te::Track::Ptr t)
         : host (h), viewState (h.getViewState()), track (t)
     {
+        setOpaque (true);   // paint() fills the lane
         track->state.addListener (this);
         track->edit.getTransport().addChangeListener (this);
+        viewState.selectionManager.addChangeListener (this);
         viewState.state.addListener (this);
+        lastSelected = viewState.selectionManager.isSelected (track.get());
         buildClips();
     }
 
     TrackLane::~TrackLane()
     {
         viewState.state.removeListener (this);
+        viewState.selectionManager.removeChangeListener (this);
         track->edit.getTransport().removeChangeListener (this);
         track->state.removeListener (this);
     }
@@ -33,7 +37,9 @@ namespace cdaw
 
         GridPainter::drawGridLines (g, viewState, getLocalBounds());
 
-        // Range selection
+        // Range selection (remember where it was drawn, so a change repaints just that strip)
+        lastRangeX = {};
+
         if (viewState.hasRange())
         {
             auto r = viewState.getRange();
@@ -41,6 +47,7 @@ namespace cdaw
             auto x2 = (float) viewState.timeToX (r.getEnd());
             g.setColour (Palette::selection);
             g.fillRect (juce::Rectangle<float> (x1, 0.0f, x2 - x1, (float) getHeight()));
+            lastRangeX = { (int) std::floor (x1), (int) std::ceil (x2) + 1 };
         }
 
         g.setColour (Palette::windowBackground);
@@ -64,13 +71,26 @@ namespace cdaw
             cc->setBounds (x1, 1, juce::jmax (2, x2 - x1), base - 2);
         }
 
+        // (setBounds repaints where clips were and are; no need to redraw the whole lane.)
         if (takeLanes != nullptr)
-        {
             takeLanes->setBounds (0, base, getWidth(), juce::jmax (0, getHeight() - base));
-            takeLanes->repaint();
+    }
+
+    void TrackLane::repaintRangeChange()
+    {
+        juce::Range<int> now;
+
+        if (viewState.hasRange())
+        {
+            auto r = viewState.getRange();
+            now = { (int) std::floor (viewState.timeToX (r.getStart())), (int) std::ceil (viewState.timeToX (r.getEnd())) + 1 };
         }
 
-        repaint();
+        // Only the strip that changed: where it was drawn and where it goes now.
+        auto changed = lastRangeX.isEmpty() ? now : now.isEmpty() ? lastRangeX : lastRangeX.getUnionWith (now);
+
+        if (! changed.isEmpty())
+            repaint (changed.getStart() - 1, 0, changed.getLength() + 2, getHeight());
     }
 
     void TrackLane::updateTakeLanes()
@@ -155,9 +175,18 @@ namespace cdaw
         if (v == viewState.state)
         {
             if (id == ViewIDs::viewStart || id == ViewIDs::pixelsPerSecond)
+            {
                 markAndUpdate (needsReposition);
-            else if (id == ViewIDs::rangeStart || id == ViewIDs::rangeEnd || id == ViewIDs::gridIndex)
+                repaint();          // the grid scrolls with the view
+            }
+            else if (id == ViewIDs::rangeStart || id == ViewIDs::rangeEnd)
+            {
+                repaintRangeChange();
+            }
+            else if (id == ViewIDs::gridIndex)
+            {
                 repaint();
+            }
 
             return;
         }
@@ -194,8 +223,22 @@ namespace cdaw
             markAndUpdate (needsReposition);
     }
 
-    void TrackLane::changeListenerCallback (juce::ChangeBroadcaster*)
+    void TrackLane::changeListenerCallback (juce::ChangeBroadcaster* source)
     {
+        if (source == &viewState.selectionManager)
+        {
+            // The lane background shows whether its track is selected: repaint only when that flips.
+            auto selected = viewState.selectionManager.isSelected (track.get());
+
+            if (selected != lastSelected)
+            {
+                lastSelected = selected;
+                repaint();
+            }
+
+            return;
+        }
+
         markAndUpdate (needsRecordingUpdate);
     }
 

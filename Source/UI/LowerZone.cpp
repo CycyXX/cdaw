@@ -8,6 +8,7 @@ namespace cdaw
 {
     LowerZone::LowerZone (EditViewState& vs) : viewState (vs)
     {
+        setOpaque (true);   // paint() fills the whole component
         for (auto* b : { &editorTab, &mixerTab })
         {
             b->setClickingTogglesState (false);
@@ -35,6 +36,7 @@ namespace cdaw
         if (page == Page::mixer && mixer == nullptr)
         {
             mixer = std::make_unique<MixerView> (viewState);
+            mixer->onTrackMenu = [this] (te::Track& t) { if (onTrackMenu) onTrackMenu (t); };
             addChildComponent (*mixer);
         }
 

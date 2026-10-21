@@ -1,5 +1,6 @@
 #include "AutomationOps.h"
 #include "EditViewState.h"
+#include <unordered_set>
 
 namespace cdaw::AutomationOps
 {
@@ -11,18 +12,25 @@ namespace cdaw::AutomationOps
     juce::Array<te::AutomatableParameter*> getAutomatableParameters (te::Track& track)
     {
         juce::Array<te::AutomatableParameter*> params;
+        std::unordered_set<te::AutomatableParameter*> seen;
 
         // Track-level and plugin parameters (volume, pan, sends and every plugin parameter).
+        // A set keeps this linear: plugins can expose thousands of parameters.
         for (auto p : track.getAllAutomatableParams())
-            params.addIfNotAlreadyThere (p);
+            if (seen.insert (p).second)
+                params.add (p);
 
         return params;
     }
 
     te::AutomatableParameter* findParameter (te::Track& track, const juce::String& key)
     {
-        for (auto p : getAutomatableParameters (track))
-            if (getKey (*p) == key)
+        // Key is "<ownerID>:<paramID>": compare the cheap paramID first, then the owner.
+        auto paramID = key.fromFirstOccurrenceOf (":", false, false);
+        auto ownerID = key.upToFirstOccurrenceOf (":", false, false);
+
+        for (auto p : track.getAllAutomatableParams())
+            if (p->paramID == paramID && p->getOwnerID().toString() == ownerID)
                 return p;
 
         return nullptr;

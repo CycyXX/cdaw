@@ -55,9 +55,12 @@ namespace cdaw
         std::unique_ptr<ArrangeView> arrangeView;
         std::unique_ptr<InspectorPanel> inspector;
         bool showInspector = true;
+        te::TimePosition playStartPosition;
+        void startPlayback (bool record);
+        void stopPlayback (bool discard);
         std::unique_ptr<LowerZone> lowerZone;
         bool showLowerZone = false;
-        int lowerZoneHeight = 360;
+        int lowerZoneHeight = 460;
         void setLowerZoneVisible (bool, int page);
         std::unique_ptr<juce::Component> placeholder;
         juce::TooltipWindow tooltipWindow { this, 600 };
@@ -71,6 +74,8 @@ namespace cdaw
         void importAudioDialog();
         void importMidiDialog();
         void exportMidiDialog();
+        void importDawProjectDialog();
+        void exportDawProjectDialog();
         void addInstrumentTrackMenu();
         void performTrackCommand (int commandID);
         void deleteSelection();
