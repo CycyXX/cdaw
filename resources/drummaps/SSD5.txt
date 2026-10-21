@@ -1,0 +1,24 @@
+# Steven Slate Drums 5 - STARTING POINT ONLY
+# These are the General MIDI core notes that SSD5's default map is broadly compatible with.
+# Open SSD5's mapping page, compare, then edit or extend this file (or copy it to
+# %APPDATA%\CDAW\DrumMaps\ and edit that copy). Articulations beyond GM are not listed yet.
+# Format: <midi note> <name>
+36 Kick
+37 Snare Side Stick
+38 Snare Center
+40 Snare Rimshot
+41 Floor Tom 2
+43 Floor Tom 1
+45 Rack Tom 2
+47 Rack Tom 1
+48 Rack Tom 1 (high)
+42 Hi-Hat Closed
+44 Hi-Hat Pedal
+46 Hi-Hat Open
+49 Crash 1
+57 Crash 2
+52 China
+55 Splash
+51 Ride Bow
+53 Ride Bell
+59 Ride 2

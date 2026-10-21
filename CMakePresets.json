@@ -1,0 +1,48 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "architecture": { "value": "x64", "strategy": "external" },
+      "toolset": { "value": "host=x64", "strategy": "external" },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "ninja-msvc-debug",
+      "displayName": "MSVC Debug",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "ninja-msvc-relwithdebinfo",
+      "displayName": "MSVC RelWithDebInfo (daily)",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+    },
+    {
+      "name": "ninja-msvc-release",
+      "displayName": "MSVC Release",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "ninja-msvc-debug", "configurePreset": "ninja-msvc-debug" },
+    { "name": "ninja-msvc-relwithdebinfo", "configurePreset": "ninja-msvc-relwithdebinfo" },
+    { "name": "ninja-msvc-release", "configurePreset": "ninja-msvc-release" }
+  ],
+  "testPresets": [
+    { "name": "ninja-msvc-debug", "configurePreset": "ninja-msvc-debug", "output": { "outputOnFailure": true } },
+    { "name": "ninja-msvc-relwithdebinfo", "configurePreset": "ninja-msvc-relwithdebinfo", "output": { "outputOnFailure": true } },
+    { "name": "ninja-msvc-release", "configurePreset": "ninja-msvc-release", "output": { "outputOnFailure": true } }
+  ]
+}

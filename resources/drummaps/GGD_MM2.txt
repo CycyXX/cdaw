@@ -1,0 +1,23 @@
+# GetGood Drums Modern & Massive 2 - STARTING POINT ONLY
+# General MIDI core notes. GGD kits follow GM for the main pieces but add many
+# articulations. Compare with the plugin's MIDI mapping page, then edit or extend this file
+# (or copy it to %APPDATA%\CDAW\DrumMaps\ and edit that copy).
+# Format: <midi note> <name>
+36 Kick
+37 Snare Side Stick
+38 Snare
+40 Snare Rimshot
+41 Floor Tom 2
+43 Floor Tom 1
+45 Rack Tom 2
+47 Rack Tom 1
+48 Rack Tom 1 (high)
+42 Hi-Hat Closed
+44 Hi-Hat Pedal
+46 Hi-Hat Open
+49 Crash Left
+57 Crash Right
+52 China
+55 Splash
+51 Ride
+53 Ride Bell

@@ -1,0 +1,4 @@
+[submodule "third_party/tracktion_engine"]
+	path = third_party/tracktion_engine
+	url = https://github.com/Tracktion/tracktion_engine.git
+	shallow = true
