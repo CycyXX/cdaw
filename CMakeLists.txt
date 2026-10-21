@@ -19,6 +19,8 @@ if(MSVC)
     set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "/O2 /Ob2 /DNDEBUG")
     set(CMAKE_C_FLAGS_RELWITHDEBINFO "/O2 /Ob2 /DNDEBUG")
     set(CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO "/DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF")
+    set(CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO "/DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF")     # the VST3 plugins
+    set(CMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO "/DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF")
 endif()
 
 # Tracktion's module translation units are huge and use a lot of RAM: cap their parallelism.
@@ -37,6 +39,9 @@ add_subdirectory("${TE_DIR}" tracktion_engine EXCLUDE_FROM_ALL)
 include(cmake/CDAWModules.cmake)
 
 add_subdirectory(Source)
+
+# C-Verb as a VST3, built from the same shared sources as the app's C-Verb.
+add_subdirectory(VST3/CVerb)
 
 option(CDAW_BUILD_TESTS "Build the CDAW_Tests target" ON)
 if(CDAW_BUILD_TESTS)
