@@ -44,8 +44,8 @@ namespace cdaw::CVerbParameters
             specs[width]       = { "width",       "Width",             0.0f,   2.0f,    1.0f,    0.0f,    0.0f, percent, parsePercent };
             specs[preLowCut]   = { "prelowcut",   "Pre low cut",       lowOff, 1000.0f, lowOff,  150.0f,  0.0f, lowCutText, parseHz };
             specs[preHighCut]  = { "prehighcut",  "Pre high cut",      1000.0f, highOff, highOff, 6000.0f, 0.0f, highCutText, parseHz };
-            specs[postLowCut]  = { "postlowcut",  "Post low cut",      lowOff, 1000.0f, 100.0f,  150.0f,  0.0f, lowCutText, parseHz };
-            specs[postHighCut] = { "posthighcut", "Post high cut",     1000.0f, highOff, 12000.0f, 6000.0f, 0.0f, highCutText, parseHz };
+            specs[postLowCut]  = { "postlowcut",  "Post low cut",      lowOff, highOff, 100.0f,  150.0f,  0.0f, lowCutText, parseHz };
+            specs[postHighCut] = { "posthighcut", "Post high cut",     lowOff, highOff, 12000.0f, 6000.0f, 0.0f, highCutText, parseHz };
             specs[freeze]      = { "freeze",      "Freeze",            0.0f,   1.0f,    0.0f,    0.0f,    1.0f,
                                    [] (float v) { return v >= 0.5f ? juce::String ("On") : juce::String ("Off"); }, parseFloat };
             return specs;
@@ -69,7 +69,7 @@ namespace cdaw::CVerbParameters
     ReverbEngine::Settings toSettings (const std::function<float (ID)>& valueOf)
     {
         ReverbEngine::Settings s;
-        s.mix = valueOf (mix);
+        s.mix = valueOf (mix) * 0.5f;   // knob 100% = engine 50%; the full range was far too strong
         s.preDelay = valueOf (preDelay);
         s.size = valueOf (size);
         s.decay = valueOf (decay);

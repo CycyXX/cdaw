@@ -140,8 +140,22 @@ namespace cdaw
         juce::ScopedNoDenormals noDenormals;
         const int numChannels = buffer.getNumChannels();
 
-        if (numChannels == 0 || n > wetBuffer.getNumSamples())
+        if (numChannels == 0)
             return;
+
+        // A block longer than the one prepared for (some offline renders): process it in pieces
+        // rather than passing it through dry.
+        if (n > wetBuffer.getNumSamples())
+        {
+            for (int done = 0; done < n;)
+            {
+                const int chunk = juce::jmin (n - done, wetBuffer.getNumSamples());
+                process (buffer, start + done, chunk, settings);
+                done += chunk;
+            }
+
+            return;
+        }
 
         // Nothing has come in for longer than the longest possible tail: nothing to do. Skipping
         // also holds the modulation, so the reverb starts the same way whenever sound arrives,
