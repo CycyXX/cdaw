@@ -40,8 +40,9 @@ include(cmake/CDAWModules.cmake)
 
 add_subdirectory(Source)
 
-# C-Verb as a VST3, built from the same shared sources as the app's C-Verb.
+# C-Verb and C-Multicomp as VST3s, built from the same shared sources as the app's plugins.
 add_subdirectory(VST3/CVerb)
+add_subdirectory(VST3/CMulticomp)
 
 option(CDAW_BUILD_TESTS "Build the CDAW_Tests target" ON)
 if(CDAW_BUILD_TESTS)

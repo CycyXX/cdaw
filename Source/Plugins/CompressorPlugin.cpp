@@ -1,5 +1,6 @@
 #include "CompressorPlugin.h"
 #include "../UI/Plugins/CompressorEditor.h"
+#include "../Shared/DSP/CompressorMath.h"
 
 namespace cdaw
 {
@@ -37,16 +38,7 @@ namespace cdaw
 
     float CompressorPlugin::transfer (float inDb, float thresholdDb, float ratioValue, float kneeDb)
     {
-        const float over = inDb - thresholdDb;
-        const float slope = 1.0f / ratioValue - 1.0f;     // gain change per dB above threshold (<= 0)
-
-        if (kneeDb > 0.0f && std::abs (over) <= kneeDb * 0.5f)
-        {
-            const float x = over + kneeDb * 0.5f;
-            return inDb + slope * x * x / (2.0f * kneeDb);
-        }
-
-        return over > 0.0f ? inDb + slope * over : inDb;
+        return CompressorMath::transfer (inDb, thresholdDb, ratioValue, kneeDb);
     }
 
     void CompressorPlugin::initialise (const te::PluginInitialisationInfo& info)
@@ -134,8 +126,10 @@ namespace cdaw
         if (right == nullptr)
             outPeak[1] = outPeak[0];
 
-        // The sidechain channel must not reach the output.
-        te::clearChannels (buffer, 2, -1, start, start + n);
+        // The sidechain channel must not reach the output. (Not te::clearChannels: it passes its
+        // end sample to JUCE as a sample count, which overruns the block when start > 0.)
+        for (int ch = 2; ch < numChannels; ++ch)
+            buffer.clear (ch, start, n);
 
         for (int ch = 0; ch < 2; ++ch)
         {

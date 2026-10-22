@@ -8,6 +8,7 @@
 #include "Plugins/ReverbPlugin.h"
 #include "Plugins/SimpleReverbPlugin.h"
 #include "Shared/CVerb/CVerbView.h"
+#include "Shared/Multiband/MultibandView.h"
 #include "UI/LookAndFeel/CDAWLookAndFeel.h"
 #include "UI/Plugins/CompressorEditor.h"
 #include "UI/Plugins/EqEditor.h"
@@ -122,6 +123,15 @@ namespace cdaw::test
             auto config = exe.getParentDirectory();
             auto preset = config.getParentDirectory().getParentDirectory().getParentDirectory();
             return preset.getChildFile ("VST3/CVerb/CVerb_artefacts").getChildFile (config.getFileName()).getChildFile ("VST3/C-Verb.vst3");
+        }
+
+        /** The C-Multicomp VST3 from this build tree, if it has been built. */
+        static juce::File findCMulticompVst3()
+        {
+            auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+            auto config = exe.getParentDirectory();
+            auto preset = config.getParentDirectory().getParentDirectory().getParentDirectory();
+            return preset.getChildFile ("VST3/CMulticomp/CMulticomp_artefacts").getChildFile (config.getFileName()).getChildFile ("VST3/C-Multicomp.vst3");
         }
 
         static void saveSnapshot (juce::Component& c, const juce::String& name)
@@ -324,16 +334,32 @@ namespace cdaw::test
                 logMessage ("1 kHz tone, 100 % wet: " + juce::String (wet, 1) + " dB relative to dry");
                 expectWithinAbsoluteError (wet, -3.0f, 6.0f);
 
-                auto open = gainThrough (engine, 80.0, [] (te::AudioTrack& t) { plainReverb (t); });
-                auto cut = gainThrough (engine, 80.0, [] (te::AudioTrack& t)
+                // The mix knob at 100 % is not a fully wet engine, so some dry signal remains in the
+                // output. Take out the dry part (its gain is known) and measure the reverb alone.
+                auto wetOnly = [&] (double hz, std::function<void (ReverbPlugin&)> tweak)
                 {
-                    plainReverb (t)->postLowCut.setParameter (800.0f, juce::sendNotification);
-                });
-                auto preCut = gainThrough (engine, 80.0, [] (te::AudioTrack& t)
-                {
-                    plainReverb (t)->preLowCut.setParameter (800.0f, juce::sendNotification);
-                });
-                logMessage ("80 Hz into the reverb: " + juce::String (open, 1) + " dB, post cut at 800 Hz: " + juce::String (cut, 1)
+                    auto edit = te::test_utilities::createTestEdit (engine, 1);
+                    auto track = te::getAudioTracks (*edit)[0];
+                    track->insertWaveClip ("s", writeSineFile ("eq_sine_" + juce::String ((int) hz), 1.0, 0.25f, hz), { secs (0.0, 1.0), {} }, false);
+
+                    auto dryRender = te::test_utilities::renderToAudioBuffer (*edit);
+                    auto* reverb = plainReverb (*track);
+                    tweak (*reverb);
+                    auto wetRender = te::test_utilities::renderToAudioBuffer (*edit);
+
+                    const float dryGain = std::cos (reverb->getSettings().mix * juce::MathConstants<float>::halfPi);
+                    const int n = juce::jmin (dryRender.buffer.getNumSamples(), wetRender.buffer.getNumSamples());
+
+                    for (int ch = 0; ch < wetRender.buffer.getNumChannels(); ++ch)
+                        wetRender.buffer.addFrom (ch, 0, dryRender.buffer, ch, 0, n, -dryGain);
+
+                    return rmsDb (wetRender, 0.3, 0.9) - rmsDb (dryRender, 0.3, 0.9);
+                };
+
+                auto open = wetOnly (80.0, [] (ReverbPlugin&) {});
+                auto cut = wetOnly (80.0, [] (ReverbPlugin& r) { r.postLowCut.setParameter (800.0f, juce::sendNotification); });
+                auto preCut = wetOnly (80.0, [] (ReverbPlugin& r) { r.preLowCut.setParameter (800.0f, juce::sendNotification); });
+                logMessage ("80 Hz into the reverb (wet only): " + juce::String (open, 1) + " dB, post cut at 800 Hz: " + juce::String (cut, 1)
                             + " dB, pre cut at 800 Hz: " + juce::String (preCut, 1) + " dB");
                 expectLessThan (cut, open - 30.0f);
 
@@ -551,6 +577,129 @@ namespace cdaw::test
                 }
             }
 
+            beginTest ("The C-Multicomp VST3 sounds the same as the built-in C-Multicomp");
+            {
+                auto bundle = findCMulticompVst3();
+                juce::OwnedArray<juce::PluginDescription> types;
+
+                if (bundle.exists())
+                    for (auto* format : engine.getPluginManager().pluginFormatManager.getFormats())
+                        if (format->getName() == "VST3")
+                            format->findAllTypesForFile (types, bundle.getFullPathName());
+
+                if (types.isEmpty())
+                {
+                    logMessage ("C-Multicomp VST3 not built (" + bundle.getFullPathName() + "), skipping");
+                }
+                else
+                {
+                    expectEquals (types[0]->name, juce::String ("C-Multicomp"));
+                    engine.getPluginManager().knownPluginList.addType (*types[0]);
+
+                    // The same settings on both: two bands compressing hard, a moved crossover,
+                    // and the output turned down.
+                    auto tone = writeSineFile ("cmulticomp_vst3_in", 2.0, 0.2f, 150.0);
+                    using namespace MultibandParameters;
+                    const std::vector<std::pair<int, float>> settings {
+                        { bandParam (0, bandOn), 1.0f }, { bandParam (0, bandThreshold), -30.0f }, { bandParam (0, bandRatio), 6.0f },
+                        { bandParam (1, bandOn), 1.0f }, { bandParam (1, bandThreshold), -40.0f }, { bandParam (1, bandAttack), 2.0f },
+                        { crossover (0), 90.0f }, { output, -3.0f } };
+
+                    auto render = [&] (bool useVst3)
+                    {
+                        auto edit = te::test_utilities::createTestEdit (engine, 1);
+                        auto track = te::getAudioTracks (*edit)[0];
+                        track->insertWaveClip ("in", tone, { secs (0.0, 2.0), {} }, false);
+
+                        if (useVst3)
+                        {
+                            auto plugin = edit->getPluginCache().createNewPlugin (te::ExternalPlugin::xmlTypeName, *types[0]);
+                            track->pluginList.insertPlugin (plugin, 0, nullptr);
+                            auto* instance = dynamic_cast<te::ExternalPlugin*> (plugin.get())->getAudioPluginInstance();
+                            expect (instance != nullptr, "VST3 instance loads");
+
+                            if (instance != nullptr)
+                                for (auto [index, value] : settings)
+                                    for (auto* param : instance->getParameters())
+                                        if (param->getName (64) == get (index).name)
+                                            param->setValueNotifyingHost (get (index).getRange().convertTo0to1 (value));
+                        }
+                        else
+                        {
+                            auto mb = insert<MultibandPlugin> (*track);
+                            for (auto [index, value] : settings)
+                                mb->parameter (index).setParameter (value, juce::sendNotification);
+                        }
+
+                        return te::test_utilities::renderToAudioBuffer (*edit);
+                    };
+
+                    auto vst3 = render (true), builtIn = render (false);
+                    const auto start = (int) (0.1 * builtIn.sampleRate);
+                    const auto length = juce::jmin (vst3.buffer.getNumSamples(), builtIn.buffer.getNumSamples()) - start;
+                    expectGreaterThan (length, (int) builtIn.sampleRate, "both renders have audio");
+
+                    double signal = 0.0, difference = 0.0;
+                    for (int ch = 0; ch < 2; ++ch)
+                        for (int i = start; i < start + length; ++i)
+                        {
+                            auto a = builtIn.buffer.getSample (ch, i), b = vst3.buffer.getSample (ch, i);
+                            signal += a * a;
+                            difference += (a - b) * (a - b);
+                        }
+
+                    auto db = 10.0 * std::log10 (juce::jmax (1.0e-30, difference) / juce::jmax (1.0e-30, signal));
+                    logMessage ("VST3 vs built-in C-Multicomp, difference below the signal: " + juce::String (db, 1) + " dB");
+                    expectLessThan (db, -80.0, "the same audio with the same settings");
+
+                    // What a host does besides playing: open the editor, save and restore the settings.
+                    juce::String error;
+                    auto& formats = engine.getPluginManager().pluginFormatManager;
+                    auto first = formats.createPluginInstance (*types[0], 48000.0, 512, error);
+                    auto second = formats.createPluginInstance (*types[0], 48000.0, 512, error);
+                    expect (first != nullptr && second != nullptr, "instances: " + error);
+
+                    if (first != nullptr && second != nullptr)
+                    {
+                        if (auto* editor = first->createEditorIfNeeded())
+                        {
+                            logMessage ("VST3 editor opens at " + juce::String (editor->getWidth()) + " x " + juce::String (editor->getHeight()));
+                            expectEquals (editor->getWidth(), MultibandView::defaultWidth);
+                            delete editor;
+                        }
+                        else
+                        {
+                            expect (false, "the VST3 has an editor");
+                        }
+
+                        // Every parameter, plus the Bypass switch VST3 hosts get from every plugin.
+                        expectEquals (first->getParameters().size(), count + 1, "every C-Multicomp parameter is automatable in the host");
+
+                        auto& thresholdSpec = get (bandParam (2, bandThreshold));
+                        juce::AudioProcessorParameter* threshold = nullptr;
+                        for (auto* param : first->getParameters())
+                            if (param->getName (64) == thresholdSpec.name)
+                                threshold = param;
+
+                        expect (threshold != nullptr, "High Mid Threshold is a host parameter");
+
+                        if (threshold != nullptr)
+                        {
+                            threshold->setValueNotifyingHost (thresholdSpec.getRange().convertTo0to1 (-42.0f));
+                            juce::MemoryBlock saved;
+                            first->getStateInformation (saved);
+                            second->setStateInformation (saved.getData(), (int) saved.getSize());
+
+                            for (auto* param : second->getParameters())
+                                if (param->getName (64) == thresholdSpec.name)
+                                    expectWithinAbsoluteError (thresholdSpec.getRange().convertFrom0to1 (param->getValue()), -42.0f, 0.01f, "settings restore");
+
+                            logMessage ("Threshold shown by the host: " + threshold->getCurrentValueAsText());
+                        }
+                    }
+                }
+            }
+
             beginTest ("Projects from earlier builds get CDAW's compressor and EQ");
             {
                 juce::ValueTree edit (te::IDs::EDIT);
@@ -691,7 +840,7 @@ namespace cdaw::test
                         editor.tick (levels);
                     }
 
-                    mb->postFifo->active = true;
+                    mb->engine.postFifo->active = true;
                     juce::Random rng (11);
                     juce::AudioBuffer<float> noise (1, 4096);
                     float b0 = 0, b1 = 0, b2 = 0;
@@ -705,7 +854,7 @@ namespace cdaw::test
                             b2 = 0.57000f * b2 + white * 1.0526913f;
                             noise.setSample (0, i, (b0 + b1 + b2 + white * 0.1848f) * 0.08f);
                         }
-                        mb->postFifo->push (noise);
+                        mb->engine.postFifo->push (noise);
                         editor.updateSpectrum();
                     }
 
