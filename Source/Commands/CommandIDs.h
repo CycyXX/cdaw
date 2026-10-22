@@ -25,6 +25,7 @@ namespace cdaw
             showPreferences,
             showAudioSettings,
             revealProjectFolder,
+            locateMissingFiles,
 
             // Edit
             undo = 0x22000,
@@ -113,6 +114,7 @@ namespace cdaw
             moveTrackUp,
             moveTrackDown,
             setupMultiOut,
+            addStereoAudioTrack,
 
             // Plugins
             scanPlugins = 0x26000,

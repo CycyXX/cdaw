@@ -51,6 +51,7 @@ namespace cdaw
 
             splash->setStep ("Opening the audio device", 0.30);
             auto status = AudioDeviceSetup::ensureAsioDefault (context->engine(), context->settings);
+            context->deviceTracker = AudioDeviceSetup::trackPreferredDevice (context->engine(), context->settings);
 
             splash->setStep ("Scanning audio and MIDI devices", 0.50);
             settleDevices();
@@ -102,6 +103,8 @@ namespace cdaw
 
             if (context->postStatus)
                 context->postStatus (status);
+
+            context->mainWindow->getMainComponent().checkProjectHealth();
 
             runDebugHooks();
 
@@ -172,6 +175,7 @@ namespace cdaw
         /** Developer aids, only active when the environment variables are set:
             CDAW_DEBUG_IMPORT=<file>  imports the file at bar 1 the same way a drag-and-drop does.
             CDAW_DEBUG_AUTOPLAY=1     presses play 0.5 s after start and logs the transport state for 6 s.
+            CDAW_DEBUG_PLAYAT=<s>     with AUTOPLAY: starts playing from that position (seconds).
             CDAW_DEBUG_SPECTRUM=1     opens the mixer with the spectrum analyser.
             CDAW_DEBUG_CRASH=1        crashes on purpose after 3 s (tests the crash report).
             CDAW_DEBUG_XRUNS=1        logs the audio device's dropout count and engine load every 5 s.
@@ -182,7 +186,9 @@ namespace cdaw
                                       into the open project and logs whether the plugin's preset came back
                                       identical. Use a throwaway project.
             CDAW_DEBUG_PLUGINS=1      after 3 s, inserts CDAW's EQ (a few bands set), compressor, multiband and reverb on the first
-                                      track with clips (or the first audio track) and opens both windows. */
+                                      track with clips (or the first audio track) and opens both windows.
+            CDAW_DEBUG_RECORD=<s>     after 2 s, adds a mono track on the first input, records <s> seconds and logs the
+                                      clip it made. Use a throwaway project. */
         void runDebugHooks()
         {
             // CDAW_DEBUG_CRASH=1: crash on purpose after 3 s, to check the crash report (and its symbols).
@@ -396,12 +402,49 @@ namespace cdaw
                     }
                 });
 
+            if (auto secs = juce::SystemStats::getEnvironmentVariable ("CDAW_DEBUG_RECORD", {}).getDoubleValue(); secs > 0.0)
+                juce::Timer::callAfterDelay (2000, [secs]
+                {
+                    auto& s = AppContext::get().session;
+                    if (s == nullptr || ! s->isValid())
+                        return;
+
+                    auto& edit = s->getEdit();
+                    edit.getUndoManager().beginNewTransaction ("Add audio track");
+                    auto track = TrackOps::addAudioTrack (edit, &s->getSelectionManager(), nullptr, "Debug Recording");
+                    TrackOps::assignAudioInput (*track, 0, 1);
+                    TrackOps::setArmed (*track, true);
+
+                    auto in = TrackOps::getAssignedInput (*track);
+                    juce::Logger::writeToLog ("DEBUG record: input=" + (in != nullptr ? in->getInputDevice().getName() : juce::String ("none"))
+                                              + " armed=" + juce::String ((int) TrackOps::isArmed (*track)));
+                    s->getTransport().record (false);
+
+                    juce::Timer::callAfterDelay ((int) (secs * 1000.0), [track]
+                    {
+                        if (auto& s2 = AppContext::get().session; s2 != nullptr && s2->isValid())
+                        {
+                            s2->getTransport().stop (false, false);
+                            juce::Timer::callAfterDelay (1000, [track]
+                            {
+                                auto clips = track->getClips();
+                                juce::Logger::writeToLog ("DEBUG record: " + juce::String (clips.size()) + " clip(s)"
+                                                          + (clips.isEmpty() ? juce::String() : ", " + juce::String (clips[0]->getPosition().getLength().inSeconds(), 2) + " s"));
+                            });
+                        }
+                    });
+                });
+
             if (juce::SystemStats::getEnvironmentVariable ("CDAW_DEBUG_AUTOPLAY", {}) == "1")
             {
                 juce::Timer::callAfterDelay (500, []
                 {
                     if (auto& s = AppContext::get().session; s != nullptr && s->isValid())
                     {
+                        // CDAW_DEBUG_PLAYAT=<seconds> starts from there (for screenshots of a given section).
+                        if (auto from = juce::SystemStats::getEnvironmentVariable ("CDAW_DEBUG_PLAYAT", {}).getDoubleValue(); from > 0.0)
+                            s->getTransport().setPosition (te::TimePosition::fromSeconds (from));
+
                         juce::Logger::writeToLog ("DEBUG autoplay: play");
                         s->getTransport().play (false);
                     }

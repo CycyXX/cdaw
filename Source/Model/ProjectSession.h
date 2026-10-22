@@ -51,7 +51,26 @@ namespace cdaw
         juce::File getBackupsFolder() const;
         juce::String getName() const            { return editFile.getFileNameWithoutExtension(); }
 
+        /** Audio files that had moved and were found again when the project opened. */
+        int getReconnectedFileCount() const     { return reconnectedFiles; }
+
         bool hasChangedSinceSaved() const       { return edit != nullptr && edit->hasChangedSinceSaved(); }
+
+        /** Stops a recording in progress and keeps the takes. Tracktion only adds recorded clips
+            when the transport stops, so call this before asking whether to save (otherwise a
+            take made while quitting or opening another project never reaches the file).
+            Returns true if it was recording. */
+        bool stopRecordingKeepingTakes();
+
+        /** Whether a project file (or the autosave to recover from) can be read, without loading
+            its plugins. A file that doesn't exist yet counts as readable (a new project). */
+        /** The project file a "Save As" should write for what the user picked in the file dialog.
+            An existing project file is overwritten in place (they confirmed that). A new name
+            makes a new project folder next to the other projects: if the dialog was inside a
+            project's own folder, beside that folder rather than nested in it. */
+        static juce::File resolveSaveAsTarget (const juce::File& chosen);
+
+        static bool isReadable (te::Engine&, const juce::File& editFile, const juce::File& recoverFrom = {});
 
         /** Saves to the edit file and writes a rotating backup. */
         bool save();
@@ -69,6 +88,8 @@ namespace cdaw
     private:
         te::Engine& engine;
         juce::File editFile;
+        int reconnectedFiles = 0;
+
         std::unique_ptr<te::Edit> edit;
         te::SelectionManager selectionManager { engine };
         std::unique_ptr<EditViewState> viewState;

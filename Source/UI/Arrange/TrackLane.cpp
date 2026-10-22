@@ -148,15 +148,17 @@ namespace cdaw
 
     void TrackLane::updateRecordingClip()
     {
-        bool needed = false;
+        bool needed = false, armed = false;
         auto& transport = track->edit.getTransport();
 
         if (transport.isRecording())
             if (auto at = dynamic_cast<te::AudioTrack*> (track.get()))
                 for (auto in : track->edit.getEditInputDevices().getDevicesForTargetTrack (*at))
-                    if (in->isRecordingActive (track->itemID)
-                        && in->getInputDevice().getDeviceType() == te::InputDevice::waveDevice)
-                        needed = true;
+                    if (in->getInputDevice().getDeviceType() == te::InputDevice::waveDevice)
+                    {
+                        armed = armed || in->isRecordingEnabled (track->itemID);
+                        needed = needed || in->isRecordingActive (track->itemID);
+                    }
 
         if (needed && recordingClip == nullptr)
         {
@@ -167,6 +169,13 @@ namespace cdaw
         {
             recordingClip.reset();
         }
+
+        // The transport says "recording" before the input actually starts (count-in, the device
+        // starting up), and nothing announces that moment: keep checking until the clip appears.
+        if (transport.isRecording() && armed && ! needed)
+            recordingPoll.startTimer (100);
+        else
+            recordingPoll.stopTimer();
     }
 
     //==============================================================================

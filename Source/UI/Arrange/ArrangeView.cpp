@@ -110,18 +110,7 @@ namespace cdaw
             owner.viewState.clearRange();
 
             if (e.mods.isPopupMenu())
-            {
-                juce::PopupMenu m;
-                auto add = [this] (const char* name, int cmd) { return std::make_pair (juce::String (name), cmd); };
-                for (auto [name, cmd] : { add ("Add Audio Track", CommandIDs::addAudioTrack),
-                                          add ("Add Instrument Track...", CommandIDs::addInstrumentTrack),
-                                          add ("Add FX Track", CommandIDs::addFxTrack),
-                                          add ("Add Group Track", CommandIDs::addGroupTrack),
-                                          add ("Add Folder Track", CommandIDs::addFolderTrack) })
-                    m.addItem (name, [this, cmd = cmd] { if (owner.onTrackCommand) owner.onTrackCommand (cmd); });
-
-                m.showMenuAsync ({});
-            }
+                owner.showAddTrackMenu();
         }
 
         void mouseDoubleClick (const juce::MouseEvent&) override
@@ -146,6 +135,17 @@ namespace cdaw
         addChildComponent (*arranger);
         arranger->setVisible (isArrangerShown());
         addAndMakeVisible (headersArea);
+        headersArea.onMouseDown = [this] (const juce::MouseEvent& e)
+        {
+            viewState.selectionManager.deselectAll();
+            if (e.mods.isPopupMenu())
+                showAddTrackMenu();
+        };
+        headersArea.onDoubleClick = [this] (const juce::MouseEvent&)
+        {
+            if (onTrackCommand)
+                onTrackCommand (CommandIDs::addAudioTrack);
+        };
         addAndMakeVisible (lanesArea);
         lanesArea.addAndMakeVisible (*emptyArea);
         addAndMakeVisible (*overlay);
@@ -679,6 +679,23 @@ namespace cdaw
     }
 
     //==============================================================================
+    void ArrangeView::showAddTrackMenu()
+    {
+        juce::PopupMenu m;
+        auto add = [this, &m] (const char* name, int cmd)
+        {
+            m.addItem (name, [this, cmd] { if (onTrackCommand) onTrackCommand (cmd); });
+        };
+
+        add ("Add Audio Track (Mono)", CommandIDs::addAudioTrack);
+        add ("Add Audio Track (Stereo)", CommandIDs::addStereoAudioTrack);
+        add ("Add Instrument Track...", CommandIDs::addInstrumentTrack);
+        add ("Add FX Track", CommandIDs::addFxTrack);
+        add ("Add Group Track", CommandIDs::addGroupTrack);
+        add ("Add Folder Track", CommandIDs::addFolderTrack);
+        m.showMenuAsync ({});
+    }
+
     static juce::PopupMenu createColourMenu (std::function<void (juce::Colour)> apply)
     {
         juce::PopupMenu m;
@@ -962,7 +979,8 @@ namespace cdaw
         {
             m.addItem (name, [this, cmd] { if (onTrackCommand) onTrackCommand (cmd); });
         };
-        addCmd ("Add Audio Track", CommandIDs::addAudioTrack);
+        addCmd ("Add Audio Track (Mono)", CommandIDs::addAudioTrack);
+        addCmd ("Add Audio Track (Stereo)", CommandIDs::addStereoAudioTrack);
         addCmd ("Add Instrument Track...", CommandIDs::addInstrumentTrack);
         addCmd ("Add FX Track", CommandIDs::addFxTrack);
         addCmd ("Add Group Track", CommandIDs::addGroupTrack);

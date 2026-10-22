@@ -11,6 +11,7 @@ namespace cdaw
     class InsertSlots;
     class SendSlots;
     class SpectrumView;
+    class InputsPanel;
 
     /** One mixer channel: name, routing, inserts, sends, pan, fader, meter, M/S/R. */
     class ChannelStrip : public juce::Component,
@@ -64,6 +65,7 @@ namespace cdaw
             if (selected != lastSelected) { lastSelected = selected; repaint(); }
         }
         bool lastSelected = false;
+        juce::String kindText;
         te::VolumeAndPanPlugin* getVolumePlugin() const;
 
         EditViewState& viewState;
@@ -121,6 +123,7 @@ namespace cdaw
         juce::OwnedArray<ChannelStrip> strips;
         std::unique_ptr<ChannelStrip> master;
         std::unique_ptr<SpectrumView> spectrum;
+        std::unique_ptr<InputsPanel> inputs;
         bool needsRebuild = false;
 
         bool isSpectrumShown() const;

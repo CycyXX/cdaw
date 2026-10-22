@@ -25,26 +25,7 @@ namespace cdaw
             if (at == nullptr)
                 return;
 
-            juce::PopupMenu m;
-            auto current = TrackOps::getAssignedInput (*at);
-            m.addItem ("No input", true, current == nullptr, [at] { TrackOps::assignInput (*at, nullptr); });
-
-            for (bool midi : { false, true })
-            {
-                m.addSectionHeader (midi ? "MIDI inputs" : "Audio inputs");
-
-                for (auto& c : TrackOps::getInputChoices (at->edit, midi))
-                {
-                    auto* inst = c.instance;
-                    m.addItem (c.name, true, inst == current, [at, inst]
-                    {
-                        at->edit.getUndoManager().beginNewTransaction ("Set input");
-                        TrackOps::assignInput (*at, inst);
-                    });
-                }
-            }
-
-            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&inputButton));
+            TrackOps::createInputMenu (*at).showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&inputButton));
         };
 
         outputButton.onClick = [this]

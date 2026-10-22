@@ -1,6 +1,7 @@
 #include "MixerView.h"
 #include "InsertSlots.h"
 #include "SpectrumView.h"
+#include "InputStrips.h"
 #include "../Arrange/TrackHeader.h"
 #include "../../Engine/MasterAnalyser.h"
 #include "../Common/LevelMeter.h"
@@ -106,25 +107,7 @@ namespace cdaw
                 inputButton.setTooltip ("Input");
                 inputButton.onClick = [this, at]
                 {
-                    juce::PopupMenu m;
-                    auto current = TrackOps::getAssignedInput (*at);
-                    m.addItem ("No input", true, current == nullptr, [at] { TrackOps::assignInput (*at, nullptr); });
-
-                    for (bool midi : { false, true })
-                    {
-                        m.addSectionHeader (midi ? "MIDI inputs" : "Audio inputs");
-                        for (auto& c : TrackOps::getInputChoices (at->edit, midi))
-                        {
-                            auto* inst = c.instance;
-                            m.addItem (c.name, true, inst == current, [at, inst]
-                            {
-                                at->edit.getUndoManager().beginNewTransaction ("Set input");
-                                TrackOps::assignInput (*at, inst);
-                            });
-                        }
-                    }
-
-                    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&inputButton));
+                    TrackOps::createInputMenu (*at).showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&inputButton));
                 };
                 addAndMakeVisible (inputButton);
             }
@@ -221,6 +204,12 @@ namespace cdaw
             soloButton.setToggleState (track->isSolo (false), juce::dontSendNotification);
             outputButton.setButtonText (MixerOps::describeOutput (*track));
 
+            if (auto kind = TrackOps::getKindName (*track); kind != kindText)
+            {
+                kindText = kind;
+                repaint (getLocalBounds().removeFromBottom (14));
+            }
+
             if (auto at = dynamic_cast<te::AudioTrack*> (track.get()))
             {
                 // One input lookup per tick (each walks the edit's input devices).
@@ -254,7 +243,7 @@ namespace cdaw
         {
             g.setColour (Palette::textDim);
             g.setFont (juce::FontOptions (10.0f));
-            g.drawText (TrackOps::getKindName (TrackOps::getKind (*track)), getLocalBounds().removeFromBottom (14), juce::Justification::centred);
+            g.drawText (kindText, getLocalBounds().removeFromBottom (14), juce::Justification::centred);
         }
 
         drawFaderScale (g);
@@ -427,6 +416,10 @@ namespace cdaw
         viewport.setScrollBarsShown (false, true);
         addAndMakeVisible (viewport);
 
+        inputs = std::make_unique<InputsPanel> (viewState);
+        inputs->onWidthChanged = [this] { layoutStrips(); };
+        addAndMakeVisible (*inputs);
+
         master = std::make_unique<ChannelStrip> (viewState);
         master->onLayoutChanged = [this] { layoutStrips(); };
         master->onToggleSpectrum = [this] { viewState.state.setProperty (ViewIDs::showSpectrum, ! isSpectrumShown(), nullptr); };
@@ -504,6 +497,14 @@ namespace cdaw
 
         auto masterArea = r.removeFromRight (ChannelStrip::width + 10);
         r.removeFromRight (4);
+
+        // The audio interface's inputs sit at the left.
+        if (inputs != nullptr)
+        {
+            inputs->setBounds (r.removeFromLeft (inputs->getIdealWidth()));
+            r.removeFromLeft (4);
+        }
+
         viewport.setBounds (r);
 
         const bool needsScrollBar = strips.size() * ChannelStrip::width > r.getWidth();

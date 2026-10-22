@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ArrangeHost.h"
+#include "../Common/ForwardsRightClick.h"
 
 namespace cdaw
 {
@@ -13,14 +14,18 @@ namespace cdaw
         void paint (juce::Graphics&) override;
         void resized() override;
         te::AutomatableParameter& getParameter()     { return *param; }
+        void mouseDown (const juce::MouseEvent&) override;
 
     private:
         void timerCallback() override;
+        juce::PopupMenu createParameterMenu();
+        juce::PopupMenu createModeMenu();
+        void showMenu();
 
         ArrangeHost& host;
         te::Track::Ptr track;
         te::AutomatableParameter::Ptr param;
-        juce::TextButton paramButton, modeButton, closeButton { "x" };
+        ForwardsRightClick<juce::TextButton> paramButton, modeButton, closeButton { "x" };
         juce::Label valueLabel;
     };
 

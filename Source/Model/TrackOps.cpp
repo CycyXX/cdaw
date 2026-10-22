@@ -41,6 +41,18 @@ namespace cdaw::TrackOps
         }
     }
 
+    juce::String getKindName (const te::Track& t)
+    {
+        auto kind = getKind (t);
+        auto name = getKindName (kind);
+
+        if (auto at = dynamic_cast<const te::AudioTrack*> (&t); at != nullptr && kind == TrackKind::audio)
+            name << juce::String::fromUTF8 (" \xc2\xb7 ")
+                 << (getChannelMode (*const_cast<te::AudioTrack*> (at)) == ChannelMode::stereo ? "Stereo" : "Mono");
+
+        return name;
+    }
+
     juce::Array<te::Track*> getArrangeTracks (te::Edit& edit)
     {
         juce::Array<te::Track*> result;
@@ -101,13 +113,14 @@ namespace cdaw::TrackOps
         return te::TrackInsertPoint::getEndOfTracks (edit);
     }
 
-    te::AudioTrack::Ptr addAudioTrack (te::Edit& edit, te::SelectionManager* sm, te::Track* after, const juce::String& name)
+    te::AudioTrack::Ptr addAudioTrack (te::Edit& edit, te::SelectionManager* sm, te::Track* after, const juce::String& name, ChannelMode mode)
     {
         auto colour = nextColour (edit);
         auto track = edit.insertNewAudioTrack (insertPointAfter (edit, after), sm);
 
         if (track != nullptr)
         {
+            track->state.setProperty (ViewIDs::cdawChannels, mode == ChannelMode::stereo ? "stereo" : "mono", nullptr);
             track->setName (name.isNotEmpty() ? name : makeUniqueName (edit, "Audio"));
             track->setColour (colour);
         }
@@ -342,5 +355,265 @@ namespace cdaw::TrackOps
             return in->getTargets().size();
 
         return 0;
+    }
+
+    //==============================================================================
+    ChannelMode getChannelMode (te::AudioTrack& track)
+    {
+        auto mode = track.state[ViewIDs::cdawChannels].toString();
+
+        if (mode == "stereo")   return ChannelMode::stereo;
+        if (mode == "mono")     return ChannelMode::mono;
+
+        if (auto in = getAssignedInput (track))
+            if (auto range = getChannelRange (in->getInputDevice()); range && range->second == 2)
+                return ChannelMode::stereo;
+
+        return ChannelMode::mono;
+    }
+
+    std::optional<std::pair<int, int>> getChannelRange (const te::InputDevice& device)
+    {
+        if (device.isTrackDevice())
+            return {};
+
+        if (auto wi = dynamic_cast<const te::WaveInputDevice*> (&device))
+        {
+            auto range = wi->deviceDescription.getDeviceChannelRange();
+            return std::pair<int, int> { (int) range.first, (int) (range.second - range.first) };
+        }
+
+        return {};
+    }
+
+    /** The audio interface's input channel names, numbered "Input N" when the driver only
+        numbers them (as Tracktion does). */
+    static juce::StringArray getHardwareInputNames (te::Engine& engine)
+    {
+        juce::StringArray names;
+
+        if (auto* device = engine.getDeviceManager().deviceManager.getCurrentAudioDevice())
+            names = device->getInputChannelNames();
+
+        bool bareNumbers = true;
+        for (int i = 0; i < names.size(); ++i)
+            bareNumbers = bareNumbers && names[i].trim() == juce::String (i + 1);
+
+        if (bareNumbers)
+            for (int i = 0; i < names.size(); ++i)
+                names.set (i, "Input " + juce::String (i + 1));
+
+        return names;
+    }
+
+    int getNumHardwareInputs (te::Engine& engine)
+    {
+        return getHardwareInputNames (engine).size();
+    }
+
+    /** "In 1" + "In 2" -> "In 1+2"; names without a shared numbered prefix are joined. */
+    static juce::String makePairName (const juce::String& a, const juce::String& b)
+    {
+        auto prefixA = a.trimCharactersAtEnd ("0123456789");
+        auto prefixB = b.trimCharactersAtEnd ("0123456789");
+
+        if (prefixA == prefixB && prefixA.length() < a.length() && prefixB.length() < b.length())
+            return a + "+" + b.substring (prefixB.length());
+
+        return a + " + " + b;
+    }
+
+    juce::Array<AudioInputChoice> getAudioInputChoices (te::Engine& engine, ChannelMode mode)
+    {
+        juce::Array<AudioInputChoice> choices;
+        auto names = getHardwareInputNames (engine);
+
+        if (mode == ChannelMode::mono)
+        {
+            for (int i = 0; i < names.size(); ++i)
+                choices.add ({ names[i], i, 1 });
+        }
+        else
+        {
+            for (int i = 0; i + 1 < names.size(); i += 2)
+                choices.add ({ makePairName (names[i], names[i + 1]), i, 2 });
+        }
+
+        return choices;
+    }
+
+    static te::InputDeviceInstance* findInputInstance (te::Edit& edit, int first, int num)
+    {
+        for (auto* in : edit.getAllInputDevices())
+            if (auto range = getChannelRange (in->getInputDevice()); range && range->first == first && range->second == num)
+                return in;
+
+        return nullptr;
+    }
+
+    /** Regroups the device's inputs so that one covers exactly [first, first + num). The engine
+        rebuilds its inputs (and every edit's input instances) synchronously here. */
+    static void groupInputChannels (te::DeviceManager& dm, int first, int num)
+    {
+        for (int attempt = 0; attempt < 4; ++attempt)
+        {
+            dm.dispatchPendingUpdates();
+            te::WaveInputDevice* containing = nullptr;
+            std::pair<int, int> range;
+
+            for (auto* wi : dm.getWaveInputDevices())
+            {
+                if (auto r = getChannelRange (*wi); r && r->first <= first && first < r->first + r->second)
+                {
+                    containing = wi;
+                    range = *r;
+                }
+            }
+
+            if (containing == nullptr)
+                return;
+
+            if (range.first != first)
+            {
+                // Shorten the input that straddles `first`, so a new one starts there.
+                dm.setDeviceNumChannels (*containing, (uint32_t) (first - range.first));
+            }
+            else if (range.second != num)
+            {
+                dm.setDeviceNumChannels (*containing, (uint32_t) num);
+            }
+            else
+            {
+                if (! containing->isEnabled())
+                    containing->setEnabled (true);
+
+                dm.dispatchPendingUpdates();
+                return;
+            }
+        }
+    }
+
+    static juce::StringArray regroupInputs (te::Edit& edit, int first, int num, te::AudioTrack* except)
+    {
+        juce::StringArray lost;
+
+        if (findInputInstance (edit, first, num) != nullptr)
+            return lost;
+
+        // Regrouping removes the inputs that overlap these channels. Unassign them first, so
+        // the tracks on them don't silently get them back if the channels are regrouped later.
+        // Not undoable: the regrouping itself can't be undone, and undo would otherwise put the
+        // tracks back on inputs that no longer exist (which then return if the channels split).
+        auto overlaps = [first, num] (std::pair<int, int> r) { return r.first < first + num && first < r.first + r.second; };
+
+        for (auto t : te::getAudioTracks (edit))
+        {
+            if (auto in = getAssignedInput (*t))
+            {
+                if (auto r = getChannelRange (in->getInputDevice()); r && overlaps (*r))
+                {
+                    [[maybe_unused]] auto res = in->removeTarget (t->itemID, nullptr);
+
+                    if (t != except)
+                        lost.add (t->getName());
+                }
+            }
+        }
+
+        groupInputChannels (edit.engine.getDeviceManager(), first, num);
+
+        if (! lost.isEmpty())
+            edit.engine.getUIBehaviour().showInfoMessage ((lost.size() == 1 ? "No input now on track " : "No input now on tracks ")
+                                                          + lost.joinIntoString (", ") + " (its channels were regrouped)");
+
+        return lost;
+    }
+
+    juce::StringArray regroupInputs (te::Edit& edit, int firstChannel, int numChannels)
+    {
+        return regroupInputs (edit, firstChannel, numChannels, nullptr);
+    }
+
+    juce::StringArray assignAudioInput (te::AudioTrack& track, int first, int num)
+    {
+        const bool wasArmed = isArmed (track);
+        auto lost = regroupInputs (track.edit, first, num, &track);
+
+        if (auto in = findInputInstance (track.edit, first, num))
+        {
+            assignInput (track, in);
+
+            if (wasArmed)
+                setArmed (track, true);
+        }
+
+        return lost;
+    }
+
+    void setChannelMode (te::AudioTrack& track, ChannelMode mode)
+    {
+        auto in = getAssignedInput (track);
+        auto range = in != nullptr ? getChannelRange (in->getInputDevice()) : std::nullopt;
+
+        track.edit.getUndoManager().beginNewTransaction (mode == ChannelMode::stereo ? "Make track stereo" : "Make track mono");
+        track.state.setProperty (ViewIDs::cdawChannels, mode == ChannelMode::stereo ? "stereo" : "mono", &track.edit.getUndoManager());
+
+        // Move to the matching input: In 3 -> In 3+4, In 3+4 -> In 3.
+        if (range && (range->second == 2) != (mode == ChannelMode::stereo))
+        {
+            auto wanted = mode == ChannelMode::stereo ? (range->first & ~1) : range->first;
+
+            for (auto& c : getAudioInputChoices (track.edit.engine, mode))
+                if (c.firstChannel == wanted)
+                    assignAudioInput (track, c.firstChannel, c.numChannels);
+        }
+    }
+
+    juce::PopupMenu createInputMenu (te::AudioTrack& track)
+    {
+        te::AudioTrack::Ptr at = &track;
+        juce::PopupMenu m;
+        auto current = getAssignedInput (track);
+        auto currentRange = current != nullptr ? getChannelRange (current->getInputDevice()) : std::nullopt;
+        auto mode = getChannelMode (track);
+
+        m.addItem ("No input", true, current == nullptr, [at]
+        {
+            at->edit.getUndoManager().beginNewTransaction ("Set input");
+            assignInput (*at, nullptr);
+        });
+
+        m.addSectionHeader (mode == ChannelMode::stereo ? "Stereo inputs" : "Mono inputs");
+
+        for (auto& c : getAudioInputChoices (track.edit.engine, mode))
+        {
+            const bool ticked = currentRange && currentRange->first == c.firstChannel && currentRange->second == c.numChannels;
+            m.addItem (c.name, true, ticked, [at, c]
+            {
+                at->edit.getUndoManager().beginNewTransaction ("Set input");
+                assignAudioInput (*at, c.firstChannel, c.numChannels);
+            });
+        }
+
+        m.addSectionHeader ("MIDI inputs");
+
+        for (auto& c : getInputChoices (track.edit, true))
+        {
+            auto* inst = c.instance;
+            m.addItem (c.name, true, inst == current, [at, inst]
+            {
+                at->edit.getUndoManager().beginNewTransaction ("Set input");
+                assignInput (*at, inst);
+            });
+        }
+
+        if (getKind (track) == TrackKind::audio)
+        {
+            m.addSeparator();
+            m.addItem ("Mono Track", true, mode == ChannelMode::mono, [at] { setChannelMode (*at, ChannelMode::mono); });
+            m.addItem ("Stereo Track", true, mode == ChannelMode::stereo, [at] { setChannelMode (*at, ChannelMode::stereo); });
+        }
+
+        return m;
     }
 }

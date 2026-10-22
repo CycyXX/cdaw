@@ -5,6 +5,7 @@
 namespace cdaw::AudioDeviceSetup
 {
     static constexpr const char* asioDefaultAppliedKey = "asioDefaultApplied";
+    static constexpr const char* preferredDeviceKey = "preferredAudioDevice";
 
     /** 0 = preferred hardware, 1 = other hardware, -1 = never pick automatically.
         Generic wrapper drivers (e.g. Steinberg's "Generic Low Latency ASIO Driver")
@@ -96,51 +97,156 @@ namespace cdaw::AudioDeviceSetup
         juce::Logger::writeToLog ("Inputs set to mono: " + juce::String (dm.getNumWaveInDevices()) + " input(s)");
     }
 
+    std::unique_ptr<juce::XmlElement> describeOpenDevice (juce::AudioDeviceManager& adm)
+    {
+        auto* device = adm.getCurrentAudioDevice();
+        if (device == nullptr)
+            return {};
+
+        auto setup = adm.getAudioDeviceSetup();
+        auto xml = std::make_unique<juce::XmlElement> ("DEVICESETUP");
+        xml->setAttribute ("deviceType", device->getTypeName());
+        xml->setAttribute ("audioOutputDeviceName", setup.outputDeviceName);
+        xml->setAttribute ("audioInputDeviceName", setup.inputDeviceName);
+        xml->setAttribute ("audioDeviceRate", setup.sampleRate);
+        xml->setAttribute ("audioDeviceBufferSize", setup.bufferSize);
+        return xml;
+    }
+
+    bool isOpen (juce::AudioDeviceManager& adm, const juce::XmlElement& setup)
+    {
+        auto* device = adm.getCurrentAudioDevice();
+        return device != nullptr
+            && device->getTypeName() == setup.getStringAttribute ("deviceType")
+            && adm.getAudioDeviceSetup().outputDeviceName == setup.getStringAttribute ("audioOutputDeviceName");
+    }
+
+    static juce::String nameOf (const juce::XmlElement& setup)
+    {
+        auto name = setup.getStringAttribute ("audioOutputDeviceName");
+        return name.isNotEmpty() ? name : setup.getStringAttribute ("audioInputDeviceName");
+    }
+
     juce::String ensureAsioDefault (te::Engine& engine, AppSettings& settings)
     {
         auto& dm = engine.getDeviceManager();
         auto& adm = dm.deviceManager;
 
         const bool firstRun = ! settings.getBool (asioDefaultAppliedKey, false);
-        auto* current = adm.getCurrentAudioDevice();
 
-        if (! firstRun && current != nullptr)
-            return describeCurrentDevice (engine);
+        // The device the user chose. Tracktion saves whatever device is open, including a
+        // stand-in opened because the chosen one was busy or unplugged, so CDAW keeps its own
+        // record. The first time, that is what Tracktion had saved.
+        auto preferred = settings.getXml (preferredDeviceKey);
 
-        juce::AudioIODeviceType* asioType = nullptr;
-
-        for (auto* type : adm.getAvailableDeviceTypes())
-            if (type->getTypeName() == "ASIO")
-                asioType = type;
-
-        bool opened = false;
-
-        if (asioType != nullptr)
+        if (preferred == nullptr && ! firstRun)
         {
-            asioType->scanForDevices();
-            auto names = asioType->getDeviceNames();
-
-            std::stable_sort (names.begin(), names.end(), [] (const juce::String& a, const juce::String& b)
-                              { return rankAsioDriver (a) < rankAsioDriver (b); });
-
-            for (auto& name : names)
-                if (rankAsioDriver (name) >= 0 && (opened = tryOpen (adm, "ASIO", name)))
-                    break;
+            if (auto saved = engine.getPropertyStorage().getXmlProperty (te::SettingID::audio_device_setup);
+                saved != nullptr && nameOf (*saved).isNotEmpty())
+            {
+                preferred = std::move (saved);
+                settings.setXml (preferredDeviceKey, preferred.get());
+            }
         }
 
-        if (! opened && adm.getCurrentAudioDevice() == nullptr)
-            opened = tryOpen (adm, "Windows Audio", getDefaultDeviceName (adm, "Windows Audio"),
-                              getDefaultDeviceName (adm, "Windows Audio", true));
-
-        if (opened && firstRun)
+        // The chosen device may have failed when the engine started (e.g. Cubase had it), or the
+        // last start had to use a stand-in: try it again first.
+        if (preferred != nullptr && ! isOpen (adm, *preferred))
         {
-            settings.setBool (asioDefaultAppliedKey, true);
-            applyMonoInputLayoutWhenReady (engine, 0);
+            auto type = preferred->getStringAttribute ("deviceType");
+            auto out = preferred->getStringAttribute ("audioOutputDeviceName");
+            auto in = preferred->getStringAttribute ("audioInputDeviceName");
+            juce::Logger::writeToLog ("Trying the chosen audio device again: " + type + " / " + nameOf (*preferred));
+
+            if (! tryOpenWith (adm, type, out, in, preferred->getDoubleAttribute ("audioDeviceRate"),
+                               preferred->getIntAttribute ("audioDeviceBufferSize")))
+                tryOpen (adm, type, out, in);
+        }
+
+        if (firstRun || adm.getCurrentAudioDevice() == nullptr)
+        {
+            juce::AudioIODeviceType* asioType = nullptr;
+
+            for (auto* type : adm.getAvailableDeviceTypes())
+                if (type->getTypeName() == "ASIO")
+                    asioType = type;
+
+            bool opened = false;
+
+            if (asioType != nullptr)
+            {
+                asioType->scanForDevices();
+                auto names = asioType->getDeviceNames();
+
+                std::stable_sort (names.begin(), names.end(), [] (const juce::String& a, const juce::String& b)
+                                  { return rankAsioDriver (a) < rankAsioDriver (b); });
+
+                for (auto& name : names)
+                    if (rankAsioDriver (name) >= 0 && (opened = tryOpen (adm, "ASIO", name)))
+                        break;
+            }
+
+            if (! opened && adm.getCurrentAudioDevice() == nullptr)
+                opened = tryOpen (adm, "Windows Audio", getDefaultDeviceName (adm, "Windows Audio"),
+                                  getDefaultDeviceName (adm, "Windows Audio", true));
+
+            if (opened && firstRun)
+            {
+                settings.setBool (asioDefaultAppliedKey, true);
+                applyMonoInputLayoutWhenReady (engine, 0);
+            }
         }
 
         auto status = describeCurrentDevice (engine);
+
+        if (preferred == nullptr)
+        {
+            // Nothing chosen yet: what opened now is the choice.
+            if (auto open = describeOpenDevice (adm))
+                settings.setXml (preferredDeviceKey, open.get());
+        }
+        else if (! isOpen (adm, *preferred))
+        {
+            status = nameOf (*preferred) + " could not be opened (in use by another program, or not connected). Using "
+                     + status + " for now; CDAW tries it again next start.";
+        }
+
         juce::Logger::writeToLog ("Audio device: " + status);
         return status;
+    }
+
+    //==============================================================================
+    PreferredDeviceTracker::PreferredDeviceTracker (juce::AudioDeviceManager& m, std::unique_ptr<juce::XmlElement> preferred,
+                                                    std::function<void (const juce::XmlElement&)> rememberFn)
+        : adm (m), remember (std::move (rememberFn))
+    {
+        // Started on a stand-in: that device is not a choice. Anything the user opens later is.
+        if (preferred != nullptr && ! isOpen (adm, *preferred))
+            standIn = describeOpenDevice (adm);
+
+        adm.addChangeListener (this);
+    }
+
+    PreferredDeviceTracker::~PreferredDeviceTracker()
+    {
+        adm.removeChangeListener (this);
+    }
+
+    void PreferredDeviceTracker::changeListenerCallback (juce::ChangeBroadcaster*)
+    {
+        auto open = describeOpenDevice (adm);
+
+        if (open == nullptr || (standIn != nullptr && isOpen (adm, *standIn)))
+            return;
+
+        standIn.reset();
+        remember (*open);
+    }
+
+    std::unique_ptr<PreferredDeviceTracker> trackPreferredDevice (te::Engine& engine, AppSettings& settings)
+    {
+        return std::make_unique<PreferredDeviceTracker> (engine.getDeviceManager().deviceManager, settings.getXml (preferredDeviceKey),
+                                                         [&settings] (const juce::XmlElement& xml) { settings.setXml (preferredDeviceKey, &xml); });
     }
 
     juce::String describeCurrentDevice (te::Engine& engine)

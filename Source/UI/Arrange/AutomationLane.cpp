@@ -14,46 +14,25 @@ namespace cdaw
         paramButton.setTooltip ("Choose the parameter for this lane");
         paramButton.onClick = [this]
         {
-            juce::PopupMenu m;
-            juce::String lastPlugin;
-
-            for (auto p2 : AutomationOps::getAutomatableParameters (*track))
-            {
-                auto key = AutomationOps::getKey (*p2);
-                auto oldKey = AutomationOps::getKey (*param);
-                te::Track::Ptr tr = track;
-                m.addItem (AutomationOps::getDisplayName (*p2) + (p2->hasAutomationPoints() ? "  *" : ""), true, p2 == param.get(), [tr, key, oldKey]
-                {
-                    auto keys = AutomationOps::getLaneKeys (*tr);
-                    auto idx = keys.indexOf (oldKey);
-                    if (idx >= 0 && ! keys.contains (key))
-                        keys.set (idx, key);
-                    AutomationOps::setLaneKeys (*tr, keys);
-                });
-            }
-
-            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&paramButton));
+            createParameterMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&paramButton));
         };
         addAndMakeVisible (paramButton);
 
         modeButton.setTooltip ("Automation mode for this track: Read plays automation; Touch/Latch/Write record it while 'Write automation' is on");
         modeButton.onClick = [this]
         {
-            juce::PopupMenu m;
-            for (auto mode : { te::AutomationMode::read, te::AutomationMode::touch, te::AutomationMode::latch, te::AutomationMode::write })
-                m.addItem (AutomationOps::getModeName (mode), true, track->automationMode.get() == mode, [this, mode]
-                {
-                    track->automationMode = mode;
-                    if (mode != te::AutomationMode::read)
-                        track->edit.getAutomationRecordManager().setWritingAutomation (true);
-                });
-            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&modeButton));
+            createModeMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&modeButton));
         };
         addAndMakeVisible (modeButton);
 
         closeButton.setTooltip ("Hide this lane (automation is kept)");
         closeButton.onClick = [this] { AutomationOps::hideLane (*track, AutomationOps::getKey (*param)); };
         addAndMakeVisible (closeButton);
+
+        // Right-click anywhere on the header, its buttons included: the lane's menu.
+        auto openMenu = [this] (const juce::MouseEvent&) { showMenu(); };
+        paramButton.onRightClick = modeButton.onRightClick = closeButton.onRightClick = openMenu;
+        valueLabel.setInterceptsMouseClicks (false, false);
 
         valueLabel.setJustificationType (juce::Justification::centredRight);
         valueLabel.setColour (juce::Label::textColourId, Palette::textDim);
@@ -62,6 +41,68 @@ namespace cdaw
 
         timerCallback();
         startTimerHz (8);
+    }
+
+    juce::PopupMenu AutomationLaneHeader::createParameterMenu()
+    {
+        juce::PopupMenu m;
+
+        for (auto p2 : AutomationOps::getAutomatableParameters (*track))
+        {
+            auto key = AutomationOps::getKey (*p2);
+            auto oldKey = AutomationOps::getKey (*param);
+            te::Track::Ptr tr = track;
+            m.addItem (AutomationOps::getDisplayName (*p2) + (p2->hasAutomationPoints() ? "  *" : ""), true, p2 == param.get(), [tr, key, oldKey]
+            {
+                auto keys = AutomationOps::getLaneKeys (*tr);
+                auto idx = keys.indexOf (oldKey);
+                if (idx >= 0 && ! keys.contains (key))
+                    keys.set (idx, key);
+                AutomationOps::setLaneKeys (*tr, keys);
+            });
+        }
+
+        return m;
+    }
+
+    juce::PopupMenu AutomationLaneHeader::createModeMenu()
+    {
+        juce::PopupMenu m;
+        te::Track::Ptr tr = track;
+
+        for (auto mode : { te::AutomationMode::read, te::AutomationMode::touch, te::AutomationMode::latch, te::AutomationMode::write })
+            m.addItem (AutomationOps::getModeName (mode), true, track->automationMode.get() == mode, [tr, mode]
+            {
+                tr->automationMode = mode;
+                if (mode != te::AutomationMode::read)
+                    tr->edit.getAutomationRecordManager().setWritingAutomation (true);
+            });
+
+        return m;
+    }
+
+    void AutomationLaneHeader::showMenu()
+    {
+        juce::PopupMenu m;
+        te::Track::Ptr tr = track;
+        te::AutomatableParameter::Ptr p = param;
+
+        m.addSubMenu ("Parameter", createParameterMenu());
+        m.addSubMenu ("Mode", createModeMenu());
+        m.addSeparator();
+        m.addItem ("Clear Automation", p->hasAutomationPoints(), false, [tr, p]
+        {
+            tr->edit.getUndoManager().beginNewTransaction ("Clear automation");
+            p->getCurve().clear (&tr->edit.getUndoManager());
+        });
+        m.addItem ("Hide Lane", [tr, p] { AutomationOps::hideLane (*tr, AutomationOps::getKey (*p)); });
+        m.showMenuAsync ({});
+    }
+
+    void AutomationLaneHeader::mouseDown (const juce::MouseEvent& e)
+    {
+        if (e.mods.isPopupMenu())
+            showMenu();
     }
 
     void AutomationLaneHeader::timerCallback()

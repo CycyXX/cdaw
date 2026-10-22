@@ -56,6 +56,11 @@ namespace cdaw
         auto* at = dynamic_cast<te::AudioTrack*> (track.get());
         auto* ft = dynamic_cast<te::FolderTrack*> (track.get());
 
+        // Right-click anywhere on the header (its controls included) opens the track menu.
+        auto openTrackMenu = [this] (const juce::MouseEvent& e) { mouseDown (e.getEventRelativeTo (this)); };
+        muteButton.onRightClick = soloButton.onRightClick = armButton.onRightClick = monitorButton.onRightClick = openTrackMenu;
+        inputButton.onRightClick = collapseButton.onRightClick = panSlider.onRightClick = meter.onRightClick = openTrackMenu;
+
         muteButton.onClick = [this]
         {
             track->edit.getUndoManager().beginNewTransaction ("Mute");
@@ -160,6 +165,13 @@ namespace cdaw
         if (nameLabel.getText() != track->getName() && ! nameLabel.isBeingEdited())
             nameLabel.setText (track->getName(), juce::dontSendNotification);
 
+        // "Audio · Mono" follows the track's mode (and, for older tracks, its input).
+        if (auto kind = TrackOps::getKindName (*track); kind != kindText)
+        {
+            kindText = kind;
+            repaint (getLocalBounds().removeFromTop (16));
+        }
+
         muteButton.setToggleState (track->isMuted (false), juce::dontSendNotification);
         soloButton.setToggleState (track->isSolo (false), juce::dontSendNotification);
 
@@ -193,41 +205,8 @@ namespace cdaw
 
     void TrackHeader::showInputMenu()
     {
-        auto at = dynamic_cast<te::AudioTrack*> (track.get());
-        if (at == nullptr)
-            return;
-
-        auto& edit = track->edit;
-        auto current = TrackOps::getAssignedInput (*at);
-        juce::PopupMenu m;
-
-        m.addItem ("No input", true, current == nullptr, [at] { TrackOps::assignInput (*at, nullptr); });
-        m.addSeparator();
-        m.addSectionHeader ("Audio inputs");
-
-        for (auto& choice : TrackOps::getInputChoices (edit, false))
-        {
-            auto* inst = choice.instance;
-            m.addItem (choice.name, true, inst == current, [at, inst]
-            {
-                at->edit.getUndoManager().beginNewTransaction ("Set input");
-                TrackOps::assignInput (*at, inst);
-            });
-        }
-
-        m.addSectionHeader ("MIDI inputs");
-
-        for (auto& choice : TrackOps::getInputChoices (edit, true))
-        {
-            auto* inst = choice.instance;
-            m.addItem (choice.name, true, inst == current, [at, inst]
-            {
-                at->edit.getUndoManager().beginNewTransaction ("Set input");
-                TrackOps::assignInput (*at, inst);
-            });
-        }
-
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&inputButton));
+        if (auto at = dynamic_cast<te::AudioTrack*> (track.get()))
+            TrackOps::createInputMenu (*at).showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&inputButton));
     }
 
     void TrackHeader::paint (juce::Graphics& g)
@@ -240,10 +219,9 @@ namespace cdaw
         g.setColour (track->getColour());
         g.fillRect (r.getX() + indent, r.getY(), 5, r.getHeight() - 1);
 
-        auto kind = TrackOps::getKind (*track);
         g.setColour (Palette::textDim);
         g.setFont (juce::FontOptions (10.5f));
-        g.drawText (TrackOps::getKindName (kind), r.withTrimmedLeft (indent + 10).withTrimmedRight (16).removeFromTop (16),
+        g.drawText (kindText, r.withTrimmedLeft (indent + 10).withTrimmedRight (16).removeFromTop (16),
                     juce::Justification::centredRight);
 
         g.setColour (Palette::windowBackground);

@@ -1,5 +1,6 @@
 #include "ProjectSession.h"
 #include "../Plugins/BuiltInPlugins.h"
+#include "MissingMedia.h"
 
 namespace cdaw
 {
@@ -78,6 +79,19 @@ namespace cdaw
 
         if (edit != nullptr)
         {
+            // Audio that moved (a moved or renamed project folder, an old Save As): look for it by
+            // name in the project's Audio folder first, then the rest of the project folder.
+            if (! isNew)
+            {
+                reconnectedFiles = MissingMedia::relinkFromFolders (*edit, { getAudioFolder(), getProjectFolder() });
+
+                if (reconnectedFiles > 0)
+                {
+                    edit->markAsChanged();
+                    juce::Logger::writeToLog ("Reconnected " + juce::String (reconnectedFiles) + " audio file(s) that had moved");
+                }
+            }
+
             configureEdit (isNew);
             viewState = std::make_unique<EditViewState> (*edit, selectionManager);
             analyser = std::make_unique<MasterAnalyser> (*edit);
@@ -116,6 +130,29 @@ namespace cdaw
         }
 
         edit.reset();
+    }
+
+    bool ProjectSession::stopRecordingKeepingTakes()
+    {
+        if (edit == nullptr || ! edit->getTransport().isRecording())
+            return false;
+
+        edit->getTransport().stop (false, false);
+        juce::Logger::writeToLog ("Stopped recording (takes kept)");
+        return true;
+    }
+
+    bool ProjectSession::isReadable (te::Engine& engine, const juce::File& file, const juce::File& recoverFrom)
+    {
+        auto cdawFile = file.withFileExtension (projectFileSuffix);
+        auto source = recoverFrom.existsAsFile() ? recoverFrom
+                    : cdawFile.existsAsFile()    ? cdawFile
+                                                 : file;
+
+        if (! source.existsAsFile())
+            return true;
+
+        return te::loadEditFromFile (engine, source, te::ProjectItemID::createNewID ({})).isValid();
     }
 
     void ProjectSession::configureEdit (bool isNew)
@@ -249,6 +286,22 @@ namespace cdaw
             te::EditFileOperations (*edit).deleteTempVersion();
         else
             te::EditFileOperations::getTempVersionOfEditFile (editFile).deleteFile();
+    }
+
+    juce::File ProjectSession::resolveSaveAsTarget (const juce::File& chosen)
+    {
+        auto file = chosen.withFileExtension (projectFileSuffix);
+
+        if (file.existsAsFile())
+            return file;
+
+        auto parent = file.getParentDirectory();
+
+        // Inside a project's own folder (it holds <FolderName>.cdaw): a new project goes beside it.
+        if (parent.getChildFile (parent.getFileName() + projectFileSuffix).existsAsFile())
+            parent = parent.getParentDirectory();
+
+        return createProjectFolder (parent, file.getFileNameWithoutExtension());
     }
 
     juce::File ProjectSession::createProjectFolder (const juce::File& parent, const juce::String& name)

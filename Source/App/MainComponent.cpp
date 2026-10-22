@@ -3,6 +3,7 @@
 #include "../Commands/CommandIDs.h"
 #include "../Engine/AudioDeviceSetup.h"
 #include "../Model/ClipOps.h"
+#include "../UI/Project/MissingFilesDialog.h"
 #include "../Model/DawProject.h"
 #include "../Model/ProjectSession.h"
 #include "../Model/TrackOps.h"
@@ -241,6 +242,20 @@ namespace cdaw
     void MainComponent::openProject (const juce::File& editFile, const juce::File& recoverFrom)
     {
         auto& ctx = AppContext::get();
+
+        // Check the file can be read before closing the current project, so a damaged file
+        // doesn't leave an empty window behind.
+        if (! ProjectSession::isReadable (ctx.engine(), editFile, recoverFrom))
+        {
+            auto backups = editFile.getParentDirectory().getChildFile ("Backups");
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Open Project",
+                                                    "Could not read " + editFile.getFullPathName() + "."
+                                                      + (backups.isDirectory() ? "\n\nEarlier versions are in " + backups.getFullPathName() : juce::String()),
+                                                    "OK", this);
+            juce::Logger::writeToLog ("FAILED to read project " + editFile.getFullPathName());
+            return;
+        }
+
         inspector.reset();
         lowerZone.reset();
         arrangeView.reset();
@@ -267,6 +282,11 @@ namespace cdaw
             ctx.settings.addRecentProject (ctx.session->getEditFile());
             statusBar->showMessage ("Opened " + editFile.getFullPathName());
             juce::Logger::writeToLog ("Opened project " + editFile.getFullPathName());
+
+            // At startup the window isn't showing yet: Main checks once it is.
+            if (isShowing())
+                juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MainComponent> (this)]
+                                                 { if (safe != nullptr) safe->checkProjectHealth(); });
         }
 
         sessionChanged();
@@ -275,6 +295,10 @@ namespace cdaw
     void MainComponent::confirmDiscardOrSave (std::function<void (bool)> onDone)
     {
         auto* s = getSession();
+
+        // A take being recorded only becomes part of the project when recording stops.
+        if (s != nullptr && s->stopRecordingKeepingTakes())
+            statusBar->showMessage ("Recording stopped");
 
         if (s == nullptr || ! s->hasChangedSinceSaved())
         {
@@ -343,12 +367,38 @@ namespace cdaw
         });
     }
 
+    void MainComponent::showSaveFailed (const juce::File& file)
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save failed",
+                                                "Could not write " + file.getFullPathName() + ".\n\n"
+                                                "The disk may be full, the folder read-only, or the file locked by another program "
+                                                "(e.g. a sync tool or virus scanner). Your changes are still open: try again, or use Save As.",
+                                                "OK", this);
+    }
+
+    void MainComponent::checkProjectHealth()
+    {
+        auto* s = getSession();
+
+        if (s == nullptr)
+            return;
+
+        if (s->getReconnectedFileCount() > 0)
+            statusBar->showMessage ("Reconnected " + juce::String (s->getReconnectedFileCount()) + " audio file(s) that had moved");
+
+        // Things the project needs that aren't there: say so now rather than leaving silent clips.
+        MissingFilesDialog::show (*s);
+    }
+
     void MainComponent::saveProject (std::function<void (bool)> onDone)
     {
         auto* s = getSession();
         bool ok = s != nullptr && s->save();
         statusBar->showMessage (ok ? "Saved " + s->getName() : juce::String ("Save failed - see the log"));
         updateTitle();
+
+        if (! ok && s != nullptr)
+            showSaveFailed (s->getEditFile());
 
         if (onDone)
             onDone (ok);
@@ -374,11 +424,13 @@ namespace cdaw
                                   if (result != juce::File())
                                       if (auto* sess = getSession())
                                       {
-                                          auto file = ProjectSession::createProjectFolder (result.getParentDirectory(),
-                                                                                           result.getFileNameWithoutExtension());
-                                          ok = sess->saveAs (file);
+                                          auto file = ProjectSession::resolveSaveAsTarget (result);
+                                          ok = file == sess->getEditFile() ? sess->save() : sess->saveAs (file);
                                           updateTitle();
                                           statusBar->showMessage (ok ? "Saved as " + file.getFullPathName() : juce::String ("Save As failed"));
+
+                                          if (! ok)
+                                              showSaveFailed (file);
                                       }
 
                                   if (onDone)
@@ -718,7 +770,7 @@ namespace cdaw
                 recent.addItem (path, [this, path] { confirmDiscardOrSave ([this, path] (bool ok) { if (ok) openProjectChecked (juce::File (path)); }); });
 
             m.addSubMenu ("Open Recent", recent, recent.getNumItems() > 0);
-            add ({ 0, CommandIDs::saveProject, CommandIDs::saveProjectAs, CommandIDs::revealProjectFolder,
+            add ({ 0, CommandIDs::saveProject, CommandIDs::saveProjectAs, CommandIDs::revealProjectFolder, CommandIDs::locateMissingFiles,
                    0, CommandIDs::importAudio, CommandIDs::importMidi, CommandIDs::importDawProject,
                    0, CommandIDs::exportMixdown, CommandIDs::exportStems, CommandIDs::exportMidi, CommandIDs::exportDawProject,
                    0, CommandIDs::showAudioSettings, CommandIDs::showPreferences,
@@ -750,7 +802,7 @@ namespace cdaw
         }
         else if (index == 3)
         {
-            add ({ CommandIDs::addAudioTrack, CommandIDs::addInstrumentTrack, CommandIDs::addFxTrack,
+            add ({ CommandIDs::addAudioTrack, CommandIDs::addStereoAudioTrack, CommandIDs::addInstrumentTrack, CommandIDs::addFxTrack,
                    CommandIDs::addGroupTrack, CommandIDs::addFolderTrack, 0,
                    CommandIDs::duplicateTrack, CommandIDs::deleteTrack, CommandIDs::moveTrackUp, CommandIDs::moveTrackDown, 0,
                    CommandIDs::toggleArm, CommandIDs::toggleMute, CommandIDs::toggleSolo });

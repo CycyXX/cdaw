@@ -33,6 +33,10 @@ namespace cdaw
         void confirmDiscardOrSave (std::function<void (bool)> onDone);
 
         void openProject (const juce::File& editFile, const juce::File& recoverFrom = {});
+        /** Tells the user about audio files and plugins the open project can't find (and offers to
+            reconnect them). Call once the window is showing. */
+        void checkProjectHealth();
+
         void openProjectChecked (const juce::File& editFile);   // offers autosave recovery first
         void newProjectDialog();
         void openProjectDialog();
@@ -69,7 +73,9 @@ namespace cdaw
         void timerCallback() override;
         void updateTitle();
         void saveProject (std::function<void (bool)> onDone = nullptr);
+
         void saveProjectAsDialog (std::function<void (bool)> onDone = nullptr);
+        void showSaveFailed (const juce::File&);
         void openPluginFromFileDialog();
         void importAudioDialog();
         void importMidiDialog();

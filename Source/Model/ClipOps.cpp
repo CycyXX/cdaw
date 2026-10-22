@@ -282,8 +282,14 @@ namespace cdaw::ClipOps
                 auto& ctxSession = session;
                 juce::Array<te::Clip*> clips;
 
+                // The track it was dropped on may have been deleted meanwhile: then the files go
+                // on new tracks rather than into the detached one (where they'd be lost).
+                auto* target = dynamic_cast<te::AudioTrack*> (track.get());
+                if (target != nullptr && te::findTrackForID (ctxSession.getEdit(), target->itemID) == nullptr)
+                    target = nullptr;
+
                 if (! cancelled)
-                    clips = insertPreparedAudio (ctxSession, prepared, dynamic_cast<te::AudioTrack*> (track.get()), startTime);
+                    clips = insertPreparedAudio (ctxSession, prepared, target, startTime);
 
                 ctxSession.getEdit().engine.getUIBehaviour().showInfoMessage (cancelled ? juce::String ("Import cancelled")
                                                                                         : "Imported " + juce::String (clips.size()) + " file(s)");

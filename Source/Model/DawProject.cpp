@@ -810,9 +810,23 @@ namespace cdaw::DawProject
             juce::String tempoId, timeSigId;
 
             //==============================================================================
+            /** "./audio/x.wav" or "/audio/x.wav" -> "audio/x.wav". Only those prefixes go: a
+                blanket trim of '.' and '/' would also turn "../x" into "x" and ".x" into "x". */
+            static juce::String normaliseZipPath (juce::String path)
+            {
+                path = path.replaceCharacter ('\\', '/');
+
+                for (;;)
+                {
+                    if (path.startsWith ("./"))         path = path.substring (2);
+                    else if (path.startsWith ("/"))     path = path.substring (1);
+                    else                                return path;
+                }
+            }
+
             std::optional<juce::MemoryBlock> readZipEntry (juce::String path)
             {
-                path = path.replaceCharacter ('\\', '/').trimCharactersAtStart ("./");
+                path = normaliseZipPath (path);
 
                 for (int i = 0; i < zip.getNumEntries(); ++i)
                 {
@@ -865,7 +879,7 @@ namespace cdaw::DawProject
 
             std::unique_ptr<juce::InputStream> findZipStream (juce::String path)
             {
-                path = path.replaceCharacter ('\\', '/').trimCharactersAtStart ("./");
+                path = normaliseZipPath (path);
                 for (int i = 0; i < zip.getNumEntries(); ++i)
                     if (zip.getEntry (i)->filename.replaceCharacter ('\\', '/').equalsIgnoreCase (path))
                         return std::unique_ptr<juce::InputStream> (zip.createStreamForEntry (i));

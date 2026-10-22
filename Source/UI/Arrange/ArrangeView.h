@@ -77,13 +77,25 @@ namespace cdaw
         struct Overlay;
         struct EmptyArea;
 
+        /** "Add Audio Track / Instrument Track..." menu, for right-clicks on empty space. */
+        void showAddTrackMenu();
+
         ProjectSession& session;
         te::Edit& edit;
         EditViewState& viewState;
 
         TimeRuler ruler;
         std::unique_ptr<ArrangerLane> arranger;
-        juce::Component headersArea, lanesArea;
+        /** The header column; its empty part below the tracks adds tracks (right-click, double-click). */
+        struct HeaderColumn : public juce::Component
+        {
+            std::function<void (const juce::MouseEvent&)> onMouseDown, onDoubleClick;
+            void mouseDown (const juce::MouseEvent& e) override          { if (onMouseDown) onMouseDown (e); }
+            void mouseDoubleClick (const juce::MouseEvent& e) override   { if (onDoubleClick) onDoubleClick (e); }
+        };
+
+        HeaderColumn headersArea;
+        juce::Component lanesArea;
         std::unique_ptr<EmptyArea> emptyArea;
         std::unique_ptr<Overlay> overlay;
         juce::ScrollBar vScroll { true }, hScroll { false };

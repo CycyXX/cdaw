@@ -3,6 +3,7 @@
 #include "ArrangeHost.h"
 #include "../Common/LevelMeter.h"
 #include "../Common/PanKnob.h"
+#include "../Common/ForwardsRightClick.h"
 
 namespace cdaw
 {
@@ -52,17 +53,19 @@ namespace cdaw
         EditViewState& viewState;
         te::Track::Ptr track;
 
+        // Right-clicking any of these opens the track menu, like the header's background.
         juce::Label nameLabel;
-        HeaderToggle muteButton { "M", juce::Colour (0xfff2b134), "Mute" },
-                     soloButton { "S", juce::Colour (0xff3ccf6e), "Solo" },
-                     armButton { "R", juce::Colour (0xffe5383b), "Record enable" },
-                     monitorButton { "I", juce::Colour (0xff4fa3ff), "Input monitoring: Auto (follows record enable) / On / Off" };
-        juce::TextButton inputButton, collapseButton;
-        PanKnob panSlider;
-        LevelMeter meter;
+        ForwardsRightClick<HeaderToggle> muteButton { "M", juce::Colour (0xfff2b134), "Mute" },
+                                         soloButton { "S", juce::Colour (0xff3ccf6e), "Solo" },
+                                         armButton { "R", juce::Colour (0xffe5383b), "Record enable" },
+                                         monitorButton { "I", juce::Colour (0xff4fa3ff), "Input monitoring: Auto (follows record enable) / On / Off" };
+        ForwardsRightClick<juce::TextButton> inputButton, collapseButton;
+        ForwardsRightClick<PanKnob> panSlider;
+        ForwardsRightClick<LevelMeter> meter;
 
         bool resizing = false;
         int resizeStartHeight = 0;
         bool updatingSliders = false;
+        juce::String kindText;
     };
 }

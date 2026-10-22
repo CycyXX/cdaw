@@ -3,6 +3,7 @@
 #include "MainComponent.h"
 #include "AppContext.h"
 #include "../Commands/CommandIDs.h"
+#include "../UI/Project/MissingFilesDialog.h"
 #include "../Engine/AudioDeviceSetup.h"
 #include "../Model/ClipOps.h"
 #include "../Model/ProjectSession.h"
@@ -23,7 +24,7 @@ namespace cdaw
     {
         const juce::CommandID ids[] = {
             CommandIDs::newProject, CommandIDs::openProject, CommandIDs::saveProject, CommandIDs::saveProjectAs,
-            CommandIDs::revealProjectFolder, CommandIDs::showAudioSettings, CommandIDs::showPreferences, CommandIDs::importAudio,
+            CommandIDs::revealProjectFolder, CommandIDs::locateMissingFiles, CommandIDs::showAudioSettings, CommandIDs::showPreferences, CommandIDs::importAudio,
             CommandIDs::importMidi, CommandIDs::exportMixdown, CommandIDs::exportStems, CommandIDs::exportMidi,
             CommandIDs::importDawProject, CommandIDs::exportDawProject,
             juce::StandardApplicationCommandIDs::quit,
@@ -42,7 +43,7 @@ namespace cdaw
             CommandIDs::zoomIn, CommandIDs::zoomOut, CommandIDs::zoomToFit,
             CommandIDs::zoomInVertical, CommandIDs::zoomOutVertical,
 
-            CommandIDs::addAudioTrack, CommandIDs::addInstrumentTrack, CommandIDs::addFxTrack,
+            CommandIDs::addAudioTrack, CommandIDs::addStereoAudioTrack, CommandIDs::addInstrumentTrack, CommandIDs::addFxTrack,
             CommandIDs::addGroupTrack, CommandIDs::addFolderTrack, CommandIDs::deleteTrack, CommandIDs::duplicateTrack,
             CommandIDs::moveTrackUp, CommandIDs::moveTrackDown,
             CommandIDs::toggleArm, CommandIDs::toggleMute, CommandIDs::toggleSolo,
@@ -101,6 +102,7 @@ namespace cdaw
             case CommandIDs::importMidi:          set ("Import MIDI File...", "Import a MIDI file at the playhead", CommandCategories::file, hasSession); info.addDefaultKeypress ('i', ctrl | shift); break;
             case CommandIDs::exportMixdown:       set ("Export Mixdown...", "Render the mix to an audio file", CommandCategories::file, hasSession); info.addDefaultKeypress ('e', ctrl | shift); break;
             case CommandIDs::exportStems:         set ("Export Stems...", "Render each track to its own file", CommandCategories::file, hasSession); break;
+            case CommandIDs::locateMissingFiles:  set ("Locate Missing Files...", "Find audio files this project can't find, or point CDAW at them", CommandCategories::file, hasSession); break;
             case CommandIDs::importDawProject:    set ("Import DAWproject...", "Open a .dawproject (Cubase, Bitwig, Studio One...) as a new CDAW project", CommandCategories::file, true); break;
             case CommandIDs::exportDawProject:    set ("Export DAWproject...", "Save this project as a .dawproject for other DAWs", CommandCategories::file, hasSession); break;
             case CommandIDs::exportMidi:          set ("Export MIDI File...", "Write selected (or all) MIDI clips to a .mid file", CommandCategories::file, hasSession); break;
@@ -200,7 +202,8 @@ namespace cdaw
             case CommandIDs::zoomOutVertical:     set ("Shorter Tracks", "Decrease track heights", CommandCategories::view, hasSession); info.addDefaultKeypress ('g', shift); break;
 
             // Track
-            case CommandIDs::addAudioTrack:       set ("Add Audio Track", "Add an audio track", CommandCategories::track, hasSession); info.addDefaultKeypress ('t', ctrl); break;
+            case CommandIDs::addAudioTrack:       set ("Add Audio Track (Mono)", "Add an audio track that records one input channel", CommandCategories::track, hasSession); info.addDefaultKeypress ('t', ctrl); break;
+            case CommandIDs::addStereoAudioTrack: set ("Add Audio Track (Stereo)", "Add an audio track that records an input pair", CommandCategories::track, hasSession); break;
             case CommandIDs::addInstrumentTrack:  set ("Add Instrument Track...", "Add a track with an instrument plugin", CommandCategories::track, hasSession); info.addDefaultKeypress ('t', ctrl | shift); break;
             case CommandIDs::addFxTrack:          set ("Add FX Track", "Add an effect return channel fed by sends", CommandCategories::track, hasSession); break;
             case CommandIDs::addGroupTrack:       set ("Add Group Track", "Add a group (submix) track", CommandCategories::track, hasSession); break;
@@ -369,6 +372,7 @@ namespace cdaw
             case CommandIDs::exportMixdown:       transport.stop (false, false); ExportDialog::show (*s, false); return true;
             case CommandIDs::exportStems:         transport.stop (false, false); ExportDialog::show (*s, true); return true;
             case CommandIDs::exportMidi:          exportMidiDialog(); return true;
+            case CommandIDs::locateMissingFiles:  MissingFilesDialog::show (*s, true); return true;
             case CommandIDs::importDawProject:    importDawProjectDialog(); return true;
             case CommandIDs::exportDawProject:    exportDawProjectDialog(); return true;
 
@@ -564,6 +568,10 @@ namespace cdaw
             case CommandIDs::addAudioTrack:
                 um.beginNewTransaction ("Add audio track");
                 TrackOps::addAudioTrack (edit, &sm, insertAfter());
+                return true;
+            case CommandIDs::addStereoAudioTrack:
+                um.beginNewTransaction ("Add audio track");
+                TrackOps::addAudioTrack (edit, &sm, insertAfter(), {}, ChannelMode::stereo);
                 return true;
             case CommandIDs::addInstrumentTrack:
                 addInstrumentTrackMenu();

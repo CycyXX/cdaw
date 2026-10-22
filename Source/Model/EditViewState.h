@@ -24,7 +24,9 @@ namespace cdaw
         CDAW_DECLARE_ID (cdawType)
         CDAW_DECLARE_ID (cdawDrumMap)
         CDAW_DECLARE_ID (cdawCollapsed)
+        CDAW_DECLARE_ID (cdawChannels)
         CDAW_DECLARE_ID (showSpectrum)
+        CDAW_DECLARE_ID (showMixerInputs)
         CDAW_DECLARE_ID (showArranger)
         #undef CDAW_DECLARE_ID
     }

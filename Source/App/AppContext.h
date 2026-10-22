@@ -3,6 +3,7 @@
 #include "../PCH.h"
 #include "AppSettings.h"
 #include "../Engine/CDAWEngine.h"
+#include "../Engine/AudioDeviceSetup.h"
 #include "../UI/LookAndFeel/CDAWLookAndFeel.h"
 
 namespace cdaw
@@ -26,6 +27,7 @@ namespace cdaw
         CDAWLookAndFeel lookAndFeel;
         juce::ApplicationCommandManager commandManager;
         CDAWEngine engineHost { settings };
+        std::unique_ptr<AudioDeviceSetup::PreferredDeviceTracker> deviceTracker;   // set after the device opens
         std::unique_ptr<ProjectSession> session;   // the open project, may be null
         std::unique_ptr<MainWindow> mainWindow;
 

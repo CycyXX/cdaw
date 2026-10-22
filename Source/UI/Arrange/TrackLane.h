@@ -46,6 +46,8 @@ namespace cdaw
         te::Track::Ptr track;
         juce::OwnedArray<ClipComponent> clips;
         std::unique_ptr<RecordingClipComponent> recordingClip;
+        // Polls while recording until the input has really started (count-in, device start-up).
+        juce::TimedCallback recordingPoll { [this] { updateRecordingClip(); } };
         std::unique_ptr<TakeLanes> takeLanes;
         int lastNumTakes = 0;
         bool lastSelected = false;
