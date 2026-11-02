@@ -5,8 +5,10 @@
 #include "../../Model/ClipOps.h"
 #include "../../Model/AutomationOps.h"
 #include "../../Model/CompOps.h"
+#include "../../Model/GroupEdit.h"
 #include "../../Model/ProjectSession.h"
 #include "../../Model/TrackOps.h"
+#include "../Project/TemplateDialogs.h"
 
 namespace cdaw
 {
@@ -130,6 +132,7 @@ namespace cdaw
         overlay = std::make_unique<Overlay> (*this);
         arranger = std::make_unique<ArrangerLane> (viewState, headerWidth);
         arranger->onSectionsChanged = [this] { lanesArea.repaint(); };
+        arranger->onEditLyrics = [this] (te::ArrangerClip& s) { if (onEditLyrics) onEditLyrics (s); };
 
         addAndMakeVisible (ruler);
         addChildComponent (*arranger);
@@ -626,7 +629,7 @@ namespace cdaw
                 for (int i = 0; i < lane->getNumChildComponents(); ++i)
                     if (auto cc = dynamic_cast<ClipComponent*> (lane->getChildComponent (i)))
                         if (band.intersects (cc->getBounds().translated (0, lane->getY())))
-                            sm.addToSelection (&cc->getClip());
+                            GroupEdit::selectClip (sm, cc->getClip(), true);
             }
         }
         else if (laneDrag == LaneDrag::range && e.mouseWasDraggedSinceMouseDown())
@@ -639,6 +642,8 @@ namespace cdaw
                 sm.deselectAll();
                 for (int i = juce::jmin (a, b); i <= juce::jmax (a, b); ++i)
                     sm.addToSelection (&lanes[i]->getTrack());
+
+                GroupEdit::addGroupTracksToSelection (sm);
             }
         }
         else if (laneDrag == LaneDrag::drawMidi && laneDragTrack != nullptr)
@@ -776,42 +781,38 @@ namespace cdaw
                 cl->setColour (c);
         }));
 
-        if (auto wc = dynamic_cast<te::WaveAudioClip*> (&clip); wc != nullptr && CompOps::hasTakes (*wc))
+        if (CompOps::hasTakes (clip))
         {
             m.addSeparator();
-            te::Track::Ptr tr = clip.getTrack();
-            const bool showing = tr != nullptr && EditViewState::isShowingTakes (*tr);
-            m.addItem (showing ? "Hide Take Lanes" : "Show Take Lanes", tr != nullptr, false, [tr, showing]
-            {
-                EditViewState::setShowingTakes (*tr, ! showing);
-            });
-
+            auto* cm = &AppContext::get().commandManager;
             juce::PopupMenu takes;
-            auto files = CompOps::getTakeFiles (*wc);
-            auto active = CompOps::getActiveTake (*wc);
-            te::Clip::Ptr cp = wc;
 
-            for (int i = 0; i < files.size(); ++i)
-                takes.addItem ("Take " + juce::String (i + 1) + "   (" + files[i].getFileName() + ")", true, i == active, [cp, i, um]
+            for (auto& take : CompOps::getTakes (clip))
+            {
+                auto name = "Take " + juce::String (take.row + 1) + "   ("
+                            + (take.midi != nullptr ? juce::String (take.midi->getNotes().size()) + " notes" : take.file.getFileName()) + ")";
+
+                takes.addItem (name, take.range.overlaps (clip.getEditTimeRange()), take.active, [clips, row = take.row, um]
                 {
                     um->beginNewTransaction ("Choose take");
-                    if (auto w = dynamic_cast<te::WaveAudioClip*> (cp.get()))
-                        CompOps::setActiveTake (*w, i);
+                    juce::ReferenceCountedArray<te::Clip> pieces;
+
+                    for (auto c : clips)
+                        pieces.add (c);
+
+                    for (auto c : pieces)
+                        if (c->state.getParent().isValid())
+                            CompOps::useTake (*c, row);
                 });
+            }
 
             m.addSubMenu ("Use Take", takes);
-            m.addItem ("Unpack Takes to New Tracks", [cp, um]
-            {
-                um->beginNewTransaction ("Unpack takes");
-                if (auto w = dynamic_cast<te::WaveAudioClip*> (cp.get()))
-                    CompOps::unpackTakesToTracks (*w);
-            });
-            m.addItem ("Remove Takes (keep current)", [cp, um]
-            {
-                um->beginNewTransaction ("Remove takes");
-                if (auto w = dynamic_cast<te::WaveAudioClip*> (cp.get()))
-                    CompOps::removeTakes (*w);
-            });
+            m.addCommandItem (cm, CommandIDs::nextTake);
+            m.addCommandItem (cm, CommandIDs::prevTake);
+            m.addCommandItem (cm, CommandIDs::toggleTakeLanes);
+            m.addCommandItem (cm, CommandIDs::unpackTakes);
+            m.addCommandItem (cm, CommandIDs::deleteUnusedTakes);
+            m.addCommandItem (cm, CommandIDs::flattenTakes);
         }
 
         if (auto ac = dynamic_cast<te::AudioClipBase*> (&clip))
@@ -970,9 +971,20 @@ namespace cdaw
         }
 
         m.addSeparator();
+
+        if (t->isFolderTrack())
+            m.addItem ("Group Editing (edit its tracks as one)", true, GroupEdit::isEnabled (*t), [t]
+            {
+                GroupEdit::setEnabled (*t, ! GroupEdit::isEnabled (*t));
+            });
+
+        m.addCommandItem (&AppContext::get().commandManager, CommandIDs::groupSelectedTracks);
         m.addItem ("Move Up", [this, t, um] { um->beginNewTransaction ("Move track"); TrackOps::moveTrack (edit, *t, -1); });
         m.addItem ("Move Down", [this, t, um] { um->beginNewTransaction ("Move track"); TrackOps::moveTrack (edit, *t, 1); });
         m.addItem ("Duplicate Track", [this, t, um] { um->beginNewTransaction ("Duplicate track"); TrackOps::duplicateTrack (edit, *t); });
+        m.addItem (t->isFolderTrack() ? "Save as Track Preset (with its tracks)..." : "Save as Track Preset...",
+                   [this, t] { TemplateDialogs::saveTrackPreset (this, *t); });
+        m.addSubMenu ("Insert Track Preset", TemplateDialogs::createInsertTrackPresetMenu (edit, t.get(), &viewState.selectionManager));
         m.addSeparator();
 
         auto addCmd = [this, &m] (const juce::String& name, int cmd)

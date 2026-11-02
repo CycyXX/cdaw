@@ -8,7 +8,7 @@ namespace cdaw
     namespace ExportService
     {
         enum class Format { wav, flac, ogg, mp3 };
-        enum class Range { song, loop };
+        enum class Range { song, loop, custom };     // custom: Options::customRange (a selection or typed times)
         enum class Normalise { none, peak, lufs };
 
         struct Options
@@ -17,6 +17,7 @@ namespace cdaw
             int bitDepth = 24;                 // 16, 24, 32 (float) for WAV; 16/24 FLAC
             double sampleRate = 48000.0;
             Range range = Range::song;
+            te::TimeRange customRange;
             double tailSeconds = 2.0;          // let reverbs/delays ring out
             Normalise normalise = Normalise::none;
             float normaliseLevel = -1.0f;      // dBFS for peak, LUFS for loudness
@@ -29,7 +30,9 @@ namespace cdaw
         bool isFormatAvailable (te::Engine&, Format);
         te::TimeRange getRenderRange (te::Edit&, const Options&);
 
-        /** Builds render parameters for the whole mix (tracks empty) or specific tracks (stems). */
+        /** Builds render parameters for the whole mix (tracks empty) or specific tracks (stems). A
+            stem is the track after its own fader, before its group and the master; an FX return's
+            stem is what the tracks send to it, returned. */
         te::Renderer::Parameters makeParameters (te::Edit&, const Options&, const juce::File& dest,
                                                  const juce::Array<te::Track*>& tracks);
 
@@ -61,6 +64,7 @@ namespace cdaw
             std::vector<Item> items;
             size_t current = 0;
             std::shared_ptr<te::EditRenderer::Handle> handle;
+            std::unique_ptr<te::ScopedTrackMuter> sourceMuter;      // the current stem's source tracks
             std::function<void (bool, juce::StringArray)> onFinished;
             juce::StringArray results;
             float progress = 0.0f;

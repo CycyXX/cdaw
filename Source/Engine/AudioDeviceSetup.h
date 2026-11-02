@@ -27,13 +27,33 @@ namespace cdaw
         /** Whether the device described by a DEVICESETUP element is the one open now. */
         bool isOpen (juce::AudioDeviceManager&, const juce::XmlElement& setup);
 
-        /** Remembers the device the user picks, so a stand-in opened at startup (because the
-            chosen device was busy or unplugged) never replaces their choice. */
+        /** The device the user chose (CDAW keeps its own record of it), or null. */
+        std::unique_ptr<juce::XmlElement> getPreferredDevice (AppSettings&);
+
+        /** Opens the chosen device with its saved settings; other rates / buffer sizes only if the
+            driver objects to those. A device that won't open goes into `failed`. */
+        bool openPreferred (juce::AudioDeviceManager&, const juce::XmlElement& preferred, juce::StringArray& failed);
+
+        /** Opens another working device: hardware ASIO drivers first, then Windows Audio. Devices in
+            `failed` (or that fail now) aren't tried. */
+        bool openStandIn (juce::AudioDeviceManager&, juce::StringArray& failed);
+
+        /** While one exists, the device settings are on screen: nothing changes the device behind
+            the user's back (see AudioDeviceMonitor). */
+        struct ScopedSettingsShowing
+        {
+            ScopedSettingsShowing();
+            ~ScopedSettingsShowing();
+        };
+
+        bool areSettingsShowing();
+
+        /** Remembers the device the user picks in the device settings. Devices opened any other way
+            (a stand-in because the chosen one was busy or unplugged) never replace their choice. */
         class PreferredDeviceTracker : private juce::ChangeListener
         {
         public:
-            PreferredDeviceTracker (juce::AudioDeviceManager&, std::unique_ptr<juce::XmlElement> preferred,
-                                    std::function<void (const juce::XmlElement&)> remember);
+            PreferredDeviceTracker (juce::AudioDeviceManager&, std::function<void (const juce::XmlElement&)> remember);
             ~PreferredDeviceTracker() override;
 
         private:
@@ -41,7 +61,6 @@ namespace cdaw
 
             juce::AudioDeviceManager& adm;
             std::function<void (const juce::XmlElement&)> remember;
-            std::unique_ptr<juce::XmlElement> standIn;
         };
 
         /** Starts remembering the user's device choices in CDAW's settings (after ensureAsioDefault). */

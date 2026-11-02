@@ -243,6 +243,29 @@ namespace cdaw::ArrangerOps
         copyRange (edit, range, range.getEnd());
     }
 
+    /** Removes the region with its material and closes the gap. Clips inside it go whole first: a
+        rounding error past the region's edge would otherwise have one trimmed down to nothing, which
+        shrinks its fades in a way undo doesn't bring back. */
+    static void deleteRegionAndCloseGap (te::Edit& edit, te::TimeRange region, te::SelectionManager* sm)
+    {
+        const auto tolerance = te::TimeDuration::fromSeconds (0.0001);
+        const te::TimeRange withTolerance (region.getStart() - tolerance, region.getEnd() + tolerance);
+
+        for (auto ct : te::getTracksOfType<te::ClipTrack> (edit, true))
+        {
+            juce::ReferenceCountedArray<te::Clip> inside;
+
+            for (auto c : ct->getClips())
+                if (withTolerance.contains (c->getEditTimeRange()))
+                    inside.add (c);
+
+            for (auto c : inside)
+                c->removeFromParent();
+        }
+
+        te::deleteRegionOfTracks (edit, region, false, te::CloseGap::yes, sm);
+    }
+
     void moveSection (te::Edit& edit, te::ArrangerClip& section, te::TimePosition destination)
     {
         auto range = section.getEditTimeRange();
@@ -254,12 +277,11 @@ namespace cdaw::ArrangerOps
 
         // The original moved right by the section length if the copy went in before it.
         auto original = destination < range.getStart() ? range + range.getLength() : range;
-        te::deleteRegionOfTracks (edit, original, false, te::CloseGap::yes, nullptr);
+        deleteRegionAndCloseGap (edit, original, nullptr);
     }
 
     void deleteSection (te::Edit& edit, te::ArrangerClip& section, te::SelectionManager* sm)
     {
-        auto range = section.getEditTimeRange();
-        te::deleteRegionOfTracks (edit, range, false, te::CloseGap::yes, sm);
+        deleteRegionAndCloseGap (edit, section.getEditTimeRange(), sm);
     }
 }

@@ -1,5 +1,7 @@
 #include "TrackHeader.h"
 #include "../LookAndFeel/Palette.h"
+#include "../../Model/CompOps.h"
+#include "../../Model/GroupEdit.h"
 #include "../../Model/TrackOps.h"
 
 namespace cdaw
@@ -59,6 +61,7 @@ namespace cdaw
         // Right-click anywhere on the header (its controls included) opens the track menu.
         auto openTrackMenu = [this] (const juce::MouseEvent& e) { mouseDown (e.getEventRelativeTo (this)); };
         muteButton.onRightClick = soloButton.onRightClick = armButton.onRightClick = monitorButton.onRightClick = openTrackMenu;
+        takesButton.onRightClick = groupButton.onRightClick = openTrackMenu;
         inputButton.onRightClick = collapseButton.onRightClick = panSlider.onRightClick = meter.onRightClick = openTrackMenu;
 
         muteButton.onClick = [this]
@@ -130,6 +133,23 @@ namespace cdaw
                 host.trackHeightChanged();
             };
             addAndMakeVisible (collapseButton);
+
+            groupButton.onClick = [this]
+            {
+                GroupEdit::setEnabled (*track, ! GroupEdit::isEnabled (*track));
+                refreshButtons();
+            };
+            addAndMakeVisible (groupButton);
+        }
+
+        if (at != nullptr)
+        {
+            takesButton.onClick = [this]
+            {
+                EditViewState::setShowingTakes (*track, ! EditViewState::isShowingTakes (*track));
+                refreshButtons();
+            };
+            addChildComponent (takesButton);
         }
 
         if (auto vp = getVolumePlugin (*track))
@@ -174,9 +194,26 @@ namespace cdaw
 
         muteButton.setToggleState (track->isMuted (false), juce::dontSendNotification);
         soloButton.setToggleState (track->isSolo (false), juce::dontSendNotification);
+        groupButton.setToggleState (GroupEdit::isEnabled (*track), juce::dontSendNotification);
+
+        // The strip beside the name shows the track is being edited with its group.
+        if (auto grouped = GroupEdit::findGroupFolder (*track) != nullptr; grouped != inEditGroup)
+        {
+            inEditGroup = grouped;
+            repaint();
+        }
 
         if (auto at = dynamic_cast<te::AudioTrack*> (track.get()))
         {
+            // The button only appears on tracks with takes to show.
+            if (auto hasTakes = CompOps::trackHasTakes (*track); hasTakes != takesButton.isVisible())
+            {
+                takesButton.setVisible (hasTakes);
+                resized();
+            }
+
+            takesButton.setToggleState (EditViewState::isShowingTakes (*track), juce::dontSendNotification);
+
             // One input lookup per tick (each walks the edit's input devices).
             auto input = TrackOps::getAssignedInput (*at);
             armButton.setToggleState (input != nullptr && input->isRecordingEnabled (at->itemID), juce::dontSendNotification);
@@ -219,6 +256,12 @@ namespace cdaw
         g.setColour (track->getColour());
         g.fillRect (r.getX() + indent, r.getY(), 5, r.getHeight() - 1);
 
+        if (inEditGroup)
+        {
+            g.setColour (groupButton.findColour (juce::TextButton::buttonOnColourId));
+            g.fillRect (r.getX() + indent + 5, r.getY(), 2, r.getHeight() - 1);
+        }
+
         g.setColour (Palette::textDim);
         g.setFont (juce::FontOptions (10.5f));
         g.drawText (kindText, r.withTrimmedLeft (indent + 10).withTrimmedRight (16).removeFromTop (16),
@@ -246,6 +289,12 @@ namespace cdaw
             top.removeFromLeft (2);
         }
 
+        if (groupButton.isVisible())
+        {
+            groupButton.setBounds (top.removeFromLeft (18));
+            top.removeFromLeft (2);
+        }
+
         nameLabel.setBounds (top.withTrimmedRight (60));
 
         if (r.getHeight() < 16)
@@ -256,7 +305,7 @@ namespace cdaw
         const int bw = 22;
 
         for (auto* b : { (juce::Component*) &muteButton, (juce::Component*) &soloButton,
-                         (juce::Component*) &armButton, (juce::Component*) &monitorButton })
+                         (juce::Component*) &armButton, (juce::Component*) &monitorButton, (juce::Component*) &takesButton })
         {
             if (b->isVisible())
             {

@@ -47,6 +47,8 @@ namespace cdaw
         std::function<void (te::Clip&)> onOpenClipEditor;
         /** Called to add a track of a kind from the track context menu (command id). */
         std::function<void (int commandID)> onTrackCommand;
+        /** Called to write a song section's lyrics (its menu in the arranger strip). */
+        std::function<void (te::ArrangerClip&)> onEditLyrics;
 
         // FileDragAndDropTarget
         bool isInterestedInFileDrag (const juce::StringArray&) override;

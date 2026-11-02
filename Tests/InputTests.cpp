@@ -1,5 +1,7 @@
 #include "TestEngine.h"
+#include "Model/CompOps.h"
 #include "Model/EditViewState.h"
+#include "Model/MissingMedia.h"
 #include "Model/TrackOps.h"
 #include "UI/Mixer/InputStrips.h"
 #include "Model/ProjectSession.h"
@@ -217,7 +219,9 @@ namespace cdaw::test
                 expect (! session.stopRecordingKeepingTakes(), "Nothing to stop the second time");
             }
 
-            beginTest ("A stand-in audio device opened at startup isn't remembered as the choice");
+            recordingOverClips (io, params);
+
+            beginTest ("Only a device picked in the device settings is remembered as the choice");
             {
                 auto& adm = dm.deviceManager;
                 auto open = AudioDeviceSetup::describeOpenDevice (adm);
@@ -231,26 +235,275 @@ namespace cdaw::test
 
                 int remembered = 0;
                 auto count = [&remembered] (const juce::XmlElement&) { ++remembered; };
+                AudioDeviceSetup::PreferredDeviceTracker tracker (adm, count);
+
+                // A device opened by a fallback (the chosen interface was busy or unplugged).
+                expect (! AudioDeviceSetup::areSettingsShowing());
+                adm.sendChangeMessage();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+                expectEquals (remembered, 0, "a stand-in isn't a choice");
 
                 {
-                    // The chosen interface was busy, so this device is a stand-in.
-                    AudioDeviceSetup::PreferredDeviceTracker tracker (adm, std::make_unique<juce::XmlElement> (busy), count);
+                    // The user picks a device in the settings.
+                    AudioDeviceSetup::ScopedSettingsShowing showing;
+                    expect (AudioDeviceSetup::areSettingsShowing());
                     adm.sendChangeMessage();
                     juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
-                    expectEquals (remembered, 0);
+                    expectEquals (remembered, 1, "a pick in the settings is the choice");
                 }
 
-                {
-                    // Nothing chosen yet, or this is the choice: changes are remembered.
-                    AudioDeviceSetup::PreferredDeviceTracker tracker (adm, std::make_unique<juce::XmlElement> (*open), count);
-                    adm.sendChangeMessage();
-                    juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
-                    expectEquals (remembered, 1);
-                }
+                // The change a pick causes may land just after the settings close: still a pick.
+                adm.sendChangeMessage();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+                expectEquals (remembered, 2);
             }
 
             // The fake device stays (as in Tracktion's own tests): removing it leaves the device
             // manager without a block size, which later renders trip over.
+        }
+
+        /** Real recordings through the engine: what lands on the track when something is already there. */
+        void recordingOverClips (te::HostedAudioDeviceInterface& io, const te::HostedAudioDeviceInterface::Parameters& params)
+        {
+            auto& engine = getEngine();
+            auto& dm = engine.getDeviceManager();
+            auto project = ProjectSession::createProjectFolder (getTestDir(), "RecordingTakes");
+            auto replaceMode = te::WaveInputDevice::getMergeModes()[1];
+
+            // The fake interface plays a tone and repeats one MIDI note.
+            std::atomic<bool> stop { false };
+            std::atomic<juce::int64> samplesFed { 0 };
+            std::atomic<int> noteToPlay { 60 };
+
+            std::thread audio ([&]
+            {
+                juce::AudioBuffer<float> block (4, params.blockSize);
+                juce::MidiBuffer midi;
+                double phase = 0.0;
+                int blockCount = 0;
+
+                while (! stop)
+                {
+                    for (int i = 0; i < block.getNumSamples(); ++i, phase += 0.05)
+                        for (int ch = 0; ch < block.getNumChannels(); ++ch)
+                            block.setSample (ch, i, 0.5f * (float) std::sin (phase));
+
+                    midi.clear();
+
+                    if (blockCount % 16 == 0)
+                        midi.addEvent (juce::MidiMessage::noteOn (1, noteToPlay, 0.8f), 0);
+                    else if (blockCount % 16 == 8)
+                        midi.addEvent (juce::MidiMessage::noteOff (1, noteToPlay), 0);
+
+                    ++blockCount;
+                    io.processBlock (block, midi);
+                    samplesFed += params.blockSize;
+                    std::this_thread::sleep_for (std::chrono::milliseconds (2));
+                }
+            });
+
+            auto waitFor = [&] (double seconds)
+            {
+                auto target = samplesFed.load() + (juce::int64) (seconds * params.sampleRate);
+
+                while (samplesFed.load() < target)
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+            };
+
+            auto record = [&] (te::TransportControl& transport, double from, double seconds, bool discard = false)
+            {
+                transport.setPosition (te::TimePosition::fromSeconds (from));
+                transport.record (false);
+                waitFor (seconds);
+                expect (transport.isRecording());
+                transport.stop (discard, false);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+            };
+
+            auto clipAt = [] (te::ClipTrack& t, double seconds) -> te::Clip*
+            {
+                for (auto c : t.getClips())
+                    if (c->getEditTimeRange().contains (te::TimePosition::fromSeconds (seconds)))
+                        return c;
+
+                return nullptr;
+            };
+
+            auto firstNote = [] (te::Clip* c)
+            {
+                auto* mc = dynamic_cast<te::MidiClip*> (c);
+                return mc != nullptr && ! mc->getSequence().getNotes().isEmpty() ? mc->getSequence().getNotes().getFirst()->getNoteNumber() : -1;
+            };
+
+            auto setMidiToTakes = [&dm]
+            {
+                for (auto& in : dm.getMidiInDevices())
+                {
+                    in->setEnabled (true);
+                    in->mergeRecordings = false;       // what Preferences' default, "New take", sets
+                    in->replaceExistingClips = false;
+                }
+            };
+
+            // The fake interface's MIDI input appears on the device manager's next scan.
+            dm.rescanMidiDeviceList();
+
+            for (int tries = 0; tries < 100 && dm.getMidiInDevices().empty(); ++tries)
+            {
+                dm.dispatchPendingUpdates();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+            }
+
+            setMidiToTakes();
+            dm.dispatchPendingUpdates();
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+
+            {
+                ProjectSession session (engine, project);
+                auto& edit = session.getEdit();
+                auto& transport = session.getTransport();
+                edit.getTransport().ensureContextAllocated();
+
+                auto track = TrackOps::addAudioTrack (edit, nullptr, nullptr, "Guitar");
+                TrackOps::assignAudioInput (*track, 0, 1);
+                TrackOps::setArmed (*track, true);
+
+                auto* wave = dynamic_cast<te::WaveInputDevice*> (&TrackOps::getAssignedInput (*track)->getInputDevice());
+                expect (wave != nullptr);
+                wave->setMergeMode (replaceMode);   // as CDAWEngine::applyRecordingDefaults sets it
+
+                beginTest ("Recording audio over a clip: both passes stay, the new one plays");
+                {
+                    record (transport, 0.0, 2.0);
+                    expectEquals (track->getClips().size(), 1);
+                    expect (! CompOps::hasTakes (*track->getClips()[0]));
+                    expect (wave->getMergeMode() == replaceMode, "Back to replace after the recording");
+                    auto firstLength = track->getClips()[0]->getPosition().getLength().inSeconds();
+                    expect (firstLength > 1.0);
+
+                    record (transport, 0.5, 0.4);
+                    expectEquals (track->getClips().size(), 3, "The old pass either side of the new one");
+                    expect (wave->getMergeMode() == replaceMode);
+
+                    for (auto c : track->getClips())
+                        expectEquals (CompOps::getNumTakes (*c), 2);
+
+                    expectEquals (CompOps::getActiveTake (*clipAt (*track, 0.2)), 0);
+                    expectEquals (CompOps::getActiveTake (*clipAt (*track, 0.6)), 1);
+                    expectEquals (CompOps::getActiveTake (*track->getClips()[2]), 0);
+
+                    // Back on the first pass, whole.
+                    CompOps::useTake (*clipAt (*track, 0.6), 0);
+                    expectEquals (track->getClips().size(), 1);
+                    expectWithinAbsoluteError (track->getClips()[0]->getPosition().getLength().inSeconds(), firstLength, 0.01);
+                    CompOps::useTake (*track->getClips()[0], 1);
+                    expectEquals (track->getClips().size(), 3);
+                }
+
+                beginTest ("Aborting a recording leaves the takes as they were");
+                {
+                    record (transport, 0.5, 0.3, true);
+                    expectEquals (track->getClips().size(), 3);
+                    expectEquals (CompOps::getMaxTakesOnTrack (*track), 2);
+                    expect (wave->getMergeMode() == replaceMode);
+                }
+
+                TrackOps::setArmed (*track, false);
+
+                beginTest ("Loop-recording audio over a clip adds each pass as a take");
+                {
+                    auto looped = TrackOps::addAudioTrack (edit, nullptr, nullptr, "Lead");
+                    TrackOps::assignAudioInput (*looped, 1, 1);
+                    TrackOps::setArmed (*looped, true);
+                    dynamic_cast<te::WaveInputDevice&> (TrackOps::getAssignedInput (*looped)->getInputDevice()).setMergeMode (replaceMode);
+
+                    transport.looping = false;
+                    record (transport, 0.0, 1.0);
+                    expectEquals (looped->getClips().size(), 1);
+
+                    // (Tracktion needs a loop of more than 2 s to record into.)
+                    transport.setLoopRange ({ te::TimePosition(), te::TimePosition::fromSeconds (2.5) });
+                    transport.looping = true;
+                    record (transport, 0.0, 6.5);
+                    transport.looping = false;
+
+                    auto takes = CompOps::getMaxTakesOnTrack (*looped);
+                    expect (takes >= 3, "The first clip and at least two passes, got " + juce::String (takes));
+
+                    // The recording stopped partway through its last pass: the one before it plays.
+                    auto* clip = clipAt (*looped, 0.3);
+                    expectEquals (CompOps::getActiveTake (*clip), takes - 2, "The last complete pass plays");
+
+                    for (auto& take : CompOps::getTakes (*clip))
+                        if (take.active)
+                            expect (take.range.getEnd() >= clip->getPosition().getEnd() - te::TimeDuration::fromSeconds (0.02));
+
+                    TrackOps::setArmed (*looped, false);
+                }
+
+                beginTest ("Recording MIDI over a clip: both passes stay, the new one plays");
+                {
+                    auto keys = TrackOps::addAudioTrack (edit, nullptr, nullptr, "Keys");
+                    auto choices = TrackOps::getInputChoices (edit, true);
+                    expect (! choices.isEmpty(), "The fake interface has a MIDI input");
+
+                    if (! choices.isEmpty())
+                    {
+                        TrackOps::assignInput (*keys, choices[0].instance);
+                        TrackOps::setArmed (*keys, true);
+
+                        noteToPlay = 60;
+                        record (transport, 0.0, 2.0);
+                        expectEquals (keys->getClips().size(), 1);
+                        expectEquals (firstNote (keys->getClips()[0]), 60);
+
+                        noteToPlay = 72;
+                        record (transport, 0.5, 0.5);
+                        expectEquals (keys->getClips().size(), 3);
+                        expectEquals (CompOps::getMaxTakesOnTrack (*keys), 2);
+                        expectEquals (firstNote (clipAt (*keys, 0.6)), 72);
+                        expectEquals (firstNote (clipAt (*keys, 0.2)), 60);
+
+                        CompOps::useTake (*clipAt (*keys, 0.6), 0);
+                        expectEquals (keys->getClips().size(), 1);
+                        expectEquals (firstNote (keys->getClips()[0]), 60);
+                        CompOps::useTake (*keys->getClips()[0], 1);
+                        expectEquals (firstNote (clipAt (*keys, 0.6)), 72);
+
+                        TrackOps::setArmed (*keys, false);
+                    }
+                }
+
+                expect (session.save());
+            }
+
+            beginTest ("Takes from real recordings are there when the project opens again");
+            {
+                ProjectSession reopened (engine, project);
+                auto tracks = te::getAudioTracks (reopened.getEdit());
+                te::AudioTrack* guitar = nullptr;
+                te::AudioTrack* keys = nullptr;
+
+                for (auto* t : tracks)
+                {
+                    if (t->getName() == "Guitar")  guitar = t;
+                    if (t->getName() == "Keys")    keys = t;
+                }
+
+                expect (guitar != nullptr && keys != nullptr);
+
+                if (guitar != nullptr && keys != nullptr)
+                {
+                    expectEquals (guitar->getClips().size(), 3);
+                    expectEquals (CompOps::getActiveTake (*clipAt (*guitar, 0.6)), 1);
+                    expect (MissingMedia::findMissingAudio (reopened.getEdit()).isEmpty());
+                    expectEquals (firstNote (clipAt (*keys, 0.6)), 72);
+                    expectEquals (firstNote (clipAt (*keys, 0.2)), 60);
+                }
+            }
+
+            stop = true;
+            audio.join();
         }
     };
 

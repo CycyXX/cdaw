@@ -40,9 +40,20 @@ include(cmake/CDAWModules.cmake)
 
 add_subdirectory(Source)
 
-# C-Verb and C-Multicomp as VST3s, built from the same shared sources as the app's plugins.
+# C-Verb, C-Multicomp, C-Comp, C-Delay, C-Chorus, C-Phaser, C-Filter, C-Dist, C-Esser, C-Synth and C-Lead as VST3s, built from the same
+# shared sources as the app's plugins.
 add_subdirectory(VST3/CVerb)
 add_subdirectory(VST3/CMulticomp)
+add_subdirectory(VST3/CComp)
+include(VST3/Common/CDAWEffect.cmake)
+add_subdirectory(VST3/CDelay)
+add_subdirectory(VST3/CChorus)
+add_subdirectory(VST3/CPhaser)
+add_subdirectory(VST3/CFilter)
+add_subdirectory(VST3/CDist)
+add_subdirectory(VST3/CEsser)
+add_subdirectory(VST3/CSynth)
+add_subdirectory(VST3/CLead)
 
 option(CDAW_BUILD_TESTS "Build the CDAW_Tests target" ON)
 if(CDAW_BUILD_TESTS)

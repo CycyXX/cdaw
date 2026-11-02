@@ -76,6 +76,94 @@ namespace cdaw::DawProject
         }
 
         //==============================================================================
+        // .vstpreset: 'VST3', int32 version, 32-char class ID, int64 offset of the chunk list; the
+        // chunks; then 'List', int32 count, { char[4] id, int64 offset, int64 size } (little-endian).
+
+        struct Vst3Preset
+        {
+            juce::String classId;
+            juce::MemoryBlock component, controller;
+        };
+
+        std::optional<Vst3Preset> parseVst3Preset (const juce::MemoryBlock& data)
+        {
+            auto* d = static_cast<const char*> (data.getData());
+            const auto size = (juce::int64) data.getSize();
+
+            if (size < 48 || std::memcmp (d, "VST3", 4) != 0)
+                return {};
+
+            Vst3Preset preset;
+            preset.classId = juce::String (d + 8, 32);
+
+            auto listOffset = (juce::int64) juce::ByteOrder::littleEndianInt64 (d + 40);
+            if (listOffset < 48 || listOffset + 8 > size || std::memcmp (d + listOffset, "List", 4) != 0)
+                return {};
+
+            auto count = (juce::int64) juce::ByteOrder::littleEndianInt (d + listOffset + 4);
+            for (juce::int64 i = 0; i < count; ++i)
+            {
+                auto* e = d + listOffset + 8 + i * 20;
+                if (e + 20 > d + size)
+                    return {};
+
+                auto offset = (juce::int64) juce::ByteOrder::littleEndianInt64 (e + 4);
+                auto length = (juce::int64) juce::ByteOrder::littleEndianInt64 (e + 12);
+                if (offset < 0 || length < 0 || offset + length > size)
+                    return {};
+
+                if (std::memcmp (e, "Comp", 4) == 0)        preset.component = juce::MemoryBlock (d + offset, (size_t) length);
+                else if (std::memcmp (e, "Cont", 4) == 0)   preset.controller = juce::MemoryBlock (d + offset, (size_t) length);
+            }
+
+            return preset;
+        }
+
+        /** VST2 plugin state as Cubase stores it for VST3 hosts ("VstW" header + an fxb / fxp
+            chunk) unwrapped to the plugin's own chunk; nothing if it isn't one. */
+        std::optional<juce::MemoryBlock> unwrapVst2State (const juce::MemoryBlock& state)
+        {
+            auto* d = static_cast<const char*> (state.getData());
+            const auto size = state.getSize();
+
+            if (size < 24 || std::memcmp (d, "VstW", 4) != 0)
+                return {};
+
+            const auto fxb = 8 + (size_t) juce::ByteOrder::bigEndianInt (d + 4);
+            if (fxb + 60 > size || std::memcmp (d + fxb, "CcnK", 4) != 0)
+                return {};
+
+            size_t sizeAt;
+            if (std::memcmp (d + fxb + 8, "FBCh", 4) == 0)          sizeAt = fxb + 156;     // bank: 7 fields, 128 reserved bytes
+            else if (std::memcmp (d + fxb + 8, "FPCh", 4) == 0)     sizeAt = fxb + 56;      // program: 7 fields, 28-char name
+            else                                                    return {};
+
+            if (sizeAt + 4 > size)
+                return {};
+
+            const auto chunkSize = (size_t) juce::ByteOrder::bigEndianInt (d + sizeAt);
+            if (sizeAt + 4 + chunkSize > size)
+                return {};
+
+            return juce::MemoryBlock (d + sizeAt + 4, chunkSize);
+        }
+
+        /** Loads a .vstpreset. One saved by another variant of the plugin (typically its VST2
+            version, as Cubase projects have them) gets this plugin's class ID, and VST2 state is
+            unwrapped to the plugin's own chunk. */
+        bool loadVst3Preset (juce::AudioPluginExtensions::VST3Client& vst3, const juce::MemoryBlock& data)
+        {
+            auto preset = parseVst3Preset (data);
+            auto own = parseVst3Preset (vst3.getPreset());
+
+            if (! preset || ! own || preset->classId.equalsIgnoreCase (own->classId))
+                return vst3.setPreset (data);
+
+            auto component = unwrapVst2State (preset->component).value_or (preset->component);
+            return vst3.setPreset (makeVst3Preset (own->classId, component, preset->controller));
+        }
+
+        //==============================================================================
         // Export
 
         struct Exporter
@@ -452,6 +540,9 @@ namespace cdaw::DawProject
                     notes->setAttribute ("id", newId());
                     const int channel = juce::jlimit (0, 15, mc->getMidiChannel().getChannelNumber() - 1);
 
+                    if (mc->getNumTakes (true) > 1)
+                        report.note ("Takes: only the current take / comp of each clip is exported");
+
                     for (auto n : mc->getSequence().getNotes())
                     {
                         auto* nx = notes->createNewChildElement ("Note");
@@ -799,6 +890,7 @@ namespace cdaw::DawProject
             juce::File source, mediaFolder;
             Report& report;
             te::TempoSequence& ts;
+            ImportOptions options;
 
             std::map<juce::String, te::Track::Ptr> trackForTrackId, trackForChannelId;
             std::map<juce::String, int> busForChannelId;
@@ -808,6 +900,47 @@ namespace cdaw::DawProject
             std::map<juce::String, ParamTarget> params;
             std::map<juce::String, juce::File> extractedFiles;
             juce::String tempoId, timeSigId;
+
+            //==============================================================================
+            // Progress, in units of work: loading a plugin weighs most, then copying a file.
+            static constexpr double pluginWork = 20.0, copyWork = 10.0;
+            double workDone = 0.0, workTotal = 1.0;
+
+            void countWork (const juce::XmlElement& project)
+            {
+                double total = 0.0;
+                std::set<juce::String> externalFiles, filesInZip;
+
+                std::function<void (const juce::XmlElement&)> visit = [&] (const juce::XmlElement& e)
+                {
+                    if (e.hasTagName ("Track") || e.hasTagName ("Clip"))                total += 1.0;
+                    else if (e.hasTagName ("Vst3Plugin"))                               total += pluginWork;
+                    else if (e.hasTagName ("Compressor") || e.hasTagName ("Equalizer")
+                              || e.hasTagName ("BuiltInPlugin"))                        total += 1.0;
+                    else if (e.hasTagName ("File"))
+                        (e.getBoolAttribute ("external") ? externalFiles : filesInZip).insert (e.getStringAttribute ("path"));
+
+                    for (auto* c : e.getChildIterator())
+                        visit (*c);
+                };
+
+                visit (project);
+
+                total += copyWork * (double) filesInZip.size();
+                if (options.copyExternalMedia)
+                    total += copyWork * (double) externalFiles.size();
+
+                workTotal = juce::jmax (1.0, total);
+            }
+
+            /** Reports what starts now; `units` is how much work it is. */
+            void step (double units, const juce::String& message)
+            {
+                if (options.progress)
+                    options.progress (juce::jmin (1.0, workDone / workTotal), message);
+
+                workDone += units;
+            }
 
             //==============================================================================
             /** "./audio/x.wav" or "/audio/x.wav" -> "audio/x.wav". Only those prefixes go: a
@@ -858,9 +991,22 @@ namespace cdaw::DawProject
                 if (fileXml.getBoolAttribute ("external"))
                 {
                     result = juce::File::isAbsolutePath (path) ? juce::File (path) : source.getParentDirectory().getChildFile (path);
+
+                    if (options.copyExternalMedia && result.existsAsFile())
+                    {
+                        step (copyWork, "Copying audio: " + result.getFileName());
+                        mediaFolder.createDirectory();
+                        auto copy = mediaFolder.getNonexistentChildFile (result.getFileNameWithoutExtension(), result.getFileExtension(), false);
+
+                        if (result.copyFileTo (copy))
+                            result = copy;
+                        else
+                            report.note ("Couldn't copy " + result.getFullPathName() + " into the project; it's used where it is");
+                    }
                 }
                 else if (auto stream = findZipStream (path))
                 {
+                    step (copyWork, "Extracting audio: " + path.replaceCharacter ('\\', '/').fromLastOccurrenceOf ("/", false, false));
                     mediaFolder.createDirectory();
                     auto name = juce::File::createLegalFileName (path.replaceCharacter ('\\', '/').fromLastOccurrenceOf ("/", false, false));
                     result = mediaFolder.getNonexistentChildFile (juce::File (name).getFileNameWithoutExtension(), juce::File (name).getFileExtension(), false);
@@ -982,13 +1128,41 @@ namespace cdaw::DawProject
             }
 
             //==============================================================================
+            /** JUCE's PluginDescription::uniqueId for a VST3 class ID ("01F6CCC9 4CAE4668 ..." as 32 hex
+                digits): the four 32-bit words hashed as value * 31 + word. */
+            static std::optional<int> vst3UniqueId (const juce::String& classId)
+            {
+                if (classId.length() != 32 || ! classId.containsOnly ("0123456789abcdefABCDEF"))
+                    return {};
+
+                juce::uint32 value = 0;
+                for (int i = 0; i < 4; ++i)
+                    value = value * 31 + (juce::uint32) classId.substring (i * 8, i * 8 + 8).getHexValue64();
+
+                return (int) value;
+            }
+
             const juce::PluginDescription* findVst3 (const juce::XmlElement& d)
             {
                 auto name = d.getStringAttribute ("deviceName");
                 auto vendor = d.getStringAttribute ("deviceVendor");
                 const juce::PluginDescription* best = nullptr;
+                auto types = edit.engine.getPluginManager().knownPluginList.getTypes();
 
-                for (auto& desc : edit.engine.getPluginManager().knownPluginList.getTypes())
+                if (auto uid = vst3UniqueId (d.getStringAttribute ("deviceID")))
+                {
+                    for (auto& desc : types)
+                    {
+                        if (desc.pluginFormatName.equalsIgnoreCase ("VST3") && desc.uniqueId == *uid)
+                        {
+                            static thread_local juce::PluginDescription found;
+                            found = desc;
+                            return &found;
+                        }
+                    }
+                }
+
+                for (auto& desc : types)
                 {
                     if (! desc.pluginFormatName.equalsIgnoreCase ("VST3") || ! desc.name.equalsIgnoreCase (name))
                         continue;
@@ -1010,6 +1184,8 @@ namespace cdaw::DawProject
                 auto tag = d.getTagName();
                 const bool enabled = d.getChildByName ("Enabled") == nullptr || d.getChildByName ("Enabled")->getBoolAttribute ("value", true);
                 te::Plugin::Ptr plugin;
+
+                step (tag == "Vst3Plugin" ? pluginWork : 1.0, "Loading plugins: " + d.getStringAttribute ("deviceName", d.getStringAttribute ("name", tag)));
 
                 if (tag == "Vst3Plugin")
                 {
@@ -1035,7 +1211,7 @@ namespace cdaw::DawProject
                             auto* instance = ext != nullptr ? ext->getAudioPluginInstance() : nullptr;
                             auto* vst3 = instance != nullptr ? instance->getVST3Client() : nullptr;
 
-                            if (data && vst3 != nullptr && vst3->setPreset (*data))
+                            if (data && vst3 != nullptr && loadVst3Preset (*vst3, *data))
                             {
                                 // setPreset() leaves JUCE's parameter values stale; a state round trip resyncs them.
                                 juce::MemoryBlock pluginState;
@@ -1127,6 +1303,23 @@ namespace cdaw::DawProject
                             eq->output.setParameter ((float) juce::jlimit (-24.0, 24.0, out->getDoubleAttribute ("value")), juce::sendNotification);
                     }
                 }
+                else if (tag == "BuiltInPlugin")
+                {
+                    // CDAW's own extension: one of its built-in plugins by type, each parameter by ID in its own units.
+                    plugin = edit.getPluginCache().createNewPlugin (d.getStringAttribute ("type"), {});
+
+                    if (plugin == nullptr)
+                    {
+                        report.note ("Unknown CDAW plugin \"" + d.getStringAttribute ("type") + "\" was left out");
+                        return;
+                    }
+
+                    plugins.insertPlugin (plugin, preFaderIndex (plugins), nullptr);
+
+                    for (auto* p : d.getChildWithTagNameIterator ("Param"))
+                        if (auto param = plugin->getAutomatableParameterByID (p->getStringAttribute ("id")))
+                            param->setParameter ((float) p->getDoubleAttribute ("value"), juce::sendNotification);
+                }
                 else
                 {
                     auto kind = tag == "Vst2Plugin" ? "VST2" : tag == "ClapPlugin" ? "CLAP" : tag == "AuPlugin" ? "Audio Unit" : "built-in";
@@ -1171,6 +1364,7 @@ namespace cdaw::DawProject
             //==============================================================================
             void readTrack (const juce::XmlElement& tx, te::FolderTrack* parent)
             {
+                step (1.0, "Creating tracks: " + tx.getStringAttribute ("name"));
                 auto id = tx.getStringAttribute ("id");
                 auto* ch = tx.getChildByName ("Channel");
                 auto role = ch != nullptr ? ch->getStringAttribute ("role") : juce::String();
@@ -1215,7 +1409,7 @@ namespace cdaw::DawProject
                     }
                     else if (isInstrumentTrack (tx))
                     {
-                        at = TrackOps::addInstrumentTrack (edit, nullptr, nullptr);
+                        at = TrackOps::addInstrumentTrack (edit, nullptr, nullptr, nullptr, false);
                     }
                     else
                     {
@@ -1358,6 +1552,7 @@ namespace cdaw::DawProject
 
             juce::Array<te::Clip*> readClip (const juce::XmlElement& cx, Frame frame, te::Track* track, std::optional<te::TimeRange> window)
             {
+                step (1.0, "Placing clips" + (track != nullptr ? ": " + track->getName() : juce::String()));
                 auto* at = dynamic_cast<te::AudioTrack*> (track);
                 if (at == nullptr)
                 {
@@ -1428,7 +1623,17 @@ namespace cdaw::DawProject
                     }
                     else if (tag == "Points")
                     {
-                        report.note ("Clip-level automation was left out");
+                        te::MidiClip* midi = nullptr;
+                        for (auto c : created)
+                            if (auto m = dynamic_cast<te::MidiClip*> (c))
+                                midi = m;
+
+                        auto* target = child->getChildByName ("Target");
+
+                        if (midi != nullptr && target != nullptr && target->hasAttribute ("expression") && contentBeats)
+                            addMidiExpression (*midi, *child, *target, cx);
+                        else
+                            report.note ("Clip-level automation was left out");
                     }
                 }
 
@@ -1493,6 +1698,47 @@ namespace cdaw::DawProject
                 return mc.get();
             }
 
+            /** Controller / pitch bend / pressure points inside a note clip (content in beats). */
+            void addMidiExpression (te::MidiClip& mc, const juce::XmlElement& points, const juce::XmlElement& target, const juce::XmlElement& cx)
+            {
+                auto expression = target.getStringAttribute ("expression");
+                int type;
+
+                if (expression == "channelController")      type = target.getIntAttribute ("controller", -1);
+                else if (expression == "pitchBend")         type = te::MidiControllerEvent::pitchWheelType;
+                else if (expression == "channelPressure")   type = te::MidiControllerEvent::channelPressureType;
+                else if (expression == "programChange")     type = te::MidiControllerEvent::programChangeType;
+                else
+                {
+                    report.note ("MIDI \"" + expression + "\" data in clips was left out");
+                    return;
+                }
+
+                if (type < 0 || (type > 127 && type < 0x1000))
+                    return;
+
+                const bool looping = cx.hasAttribute ("loopStart") && cx.hasAttribute ("loopEnd");
+                const double offset = looping ? 0.0 : cx.getDoubleAttribute ("playStart", 0.0);
+                auto& seq = mc.getSequence();
+
+                for (auto* p : points.getChildWithTagNameIterator ("RealPoint"))
+                {
+                    auto beat = p->getDoubleAttribute ("time") - offset;
+                    if (beat < 0.0)
+                        continue;
+
+                    auto v = p->getDoubleAttribute ("value");
+                    int value;
+
+                    if (type == te::MidiControllerEvent::pitchWheelType)
+                        value = juce::roundToInt (juce::jlimit (0.0, 1.0, v < 0.0 ? (v + 1.0) * 0.5 : v) * 16383.0);
+                    else
+                        value = juce::jlimit (0, 127, juce::roundToInt (v * 127.0)) << 7;
+
+                    seq.addControllerEvent (te::BeatPosition::fromBeats (beat), type, value, nullptr);
+                }
+            }
+
             te::Clip* makeAudioClip (te::AudioTrack& at, const juce::XmlElement& cx, const juce::XmlElement& audio,
                                      te::TimePosition start, te::TimePosition end, const Frame& content, const juce::XmlElement* warps)
             {
@@ -1555,6 +1801,10 @@ namespace cdaw::DawProject
 
                 clip->setFadeIn (te::TimeDuration::fromSeconds (fadeSeconds (cx.getDoubleAttribute ("fadeInTime", 0.0))));
                 clip->setFadeOut (te::TimeDuration::fromSeconds (fadeSeconds (cx.getDoubleAttribute ("fadeOutTime", 0.0))));
+
+                // Not in the DAWproject spec: clip gain (linear), written by the Cubase import.
+                if (cx.hasAttribute ("gain"))
+                    clip->setGainDB (gainToDb (cx.getDoubleAttribute ("gain", 1.0)));
 
                 ++report.clips;
                 return clip.get();
@@ -1679,6 +1929,8 @@ namespace cdaw::DawProject
             //==============================================================================
             juce::Result run (const juce::XmlElement& project)
             {
+                countWork (project);
+                step (0.0, "Preparing...");
                 clearEdit();
                 readTransport (project.getChildByName ("Transport"));
 
@@ -1775,13 +2027,58 @@ namespace cdaw::DawProject
         return juce::Result::ok();
     }
 
-    juce::Result importInto (te::Edit& edit, const juce::File& source, const juce::File& mediaFolder, Report& report)
+    juce::MemoryBlock makeVst3Preset (const juce::String& classId, const juce::MemoryBlock& component, const juce::MemoryBlock& controller)
+    {
+        juce::MemoryOutputStream out;
+        out.write ("VST3", 4);
+        out.writeInt (1);
+        out.write (classId.paddedRight (' ', 32).toRawUTF8(), 32);
+        const auto listOffsetPos = (size_t) out.getPosition();
+        out.writeInt64 (0);
+
+        struct Entry { const char* id; juce::int64 offset, size; };
+        std::vector<Entry> entries;
+
+        for (auto& [id, data] : { std::pair<const char*, const juce::MemoryBlock*> { "Comp", &component }, { "Cont", &controller } })
+        {
+            if (data->getSize() == 0)
+                continue;
+
+            entries.push_back ({ id, (juce::int64) out.getPosition(), (juce::int64) data->getSize() });
+            out.write (data->getData(), data->getSize());
+        }
+
+        const auto listOffset = (juce::int64) out.getPosition();
+        out.write ("List", 4);
+        out.writeInt ((int) entries.size());
+
+        for (auto& e : entries)
+        {
+            out.write (e.id, 4);
+            out.writeInt64 (e.offset);
+            out.writeInt64 (e.size);
+        }
+
+        auto block = out.getMemoryBlock();
+        auto le = juce::ByteOrder::swapIfBigEndian ((juce::uint64) listOffset);
+        std::memcpy (static_cast<char*> (block.getData()) + listOffsetPos, &le, sizeof (le));
+        return block;
+    }
+
+    juce::Result importInto (te::Edit& edit, const juce::File& source, const juce::File& mediaFolder, Report& report,
+                             const ImportOptions& options)
     {
         juce::ZipFile zip (source);
 
         if (zip.getNumEntries() == 0)
             return juce::Result::fail (source.getFileName() + " isn't a DAWproject file (not a zip archive)");
 
+        return importFromZip (edit, zip, source, mediaFolder, report, options);
+    }
+
+    juce::Result importFromZip (te::Edit& edit, juce::ZipFile& zip, const juce::File& source, const juce::File& mediaFolder,
+                                Report& report, const ImportOptions& options)
+    {
         std::unique_ptr<juce::XmlElement> project;
 
         for (int i = 0; i < zip.getNumEntries(); ++i)
@@ -1798,6 +2095,7 @@ namespace cdaw::DawProject
             report.note ("DAWproject version " + project->getStringAttribute ("version") + " (CDAW reads 1.x); some parts may be missing");
 
         Importer importer (edit, zip, source, mediaFolder, report);
+        importer.options = options;
         return importer.run (*project);
     }
 }

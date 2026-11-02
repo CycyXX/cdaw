@@ -6,6 +6,19 @@ namespace cdaw::MissingMedia
     {
         juce::Array<MissingFile> result;
 
+        auto entryFor = [&result, &edit] (const juce::File& expected) -> MissingFile&
+        {
+            for (auto& m : result)
+                if (m.expected == expected)
+                    return m;
+
+            result.add ({});
+            auto& entry = result.getReference (result.size() - 1);
+            entry.expected = expected;
+            entry.edit = &edit;
+            return entry;
+        };
+
         for (auto* track : te::getAudioTracks (edit))
         {
             for (auto* clip : track->getClips())
@@ -17,24 +30,26 @@ namespace cdaw::MissingMedia
 
                 auto expected = audio->getSourceFileReference().getFile();
 
-                if (expected.existsAsFile())
-                    continue;
-
-                MissingFile* entry = nullptr;
-
-                for (auto& m : result)
-                    if (m.expected == expected)
-                        entry = &m;
-
-                if (entry == nullptr)
+                if (! expected.existsAsFile())
                 {
-                    result.add ({});
-                    entry = &result.getReference (result.size() - 1);
-                    entry->expected = expected;
+                    auto& entry = entryFor (expected);
+                    entry.clips.add (clip);
+                    entry.clipNames.addIfNotAlreadyThere (clip->getName());
                 }
 
-                entry->clips.add (clip);
-                entry->clipNames.addIfNotAlreadyThere (clip->getName());
+                // Every pass on the take lanes counts, not only what's playing.
+                for (auto take : clip->state.getChildWithName (te::IDs::TAKES))
+                {
+                    te::SourceFileReference reference (edit, take, te::IDs::source);
+                    auto takeFile = reference.getFile();
+
+                    if (reference.source.get().isNotEmpty() && ! takeFile.existsAsFile())
+                    {
+                        auto& entry = entryFor (takeFile);
+                        entry.takes.add (take);
+                        entry.clipNames.addIfNotAlreadyThere (clip->getName());
+                    }
+                }
             }
         }
 
@@ -66,6 +81,13 @@ namespace cdaw::MissingMedia
         for (auto* clip : missing.clips)
         {
             clip->getSourceFileReference().setToFile (file, te::SourceFileReference::PathStyle::chooseBest, false);
+            ++count;
+        }
+
+        for (auto take : missing.takes)
+        {
+            te::SourceFileReference (*missing.edit, take, te::IDs::source)
+                .setToFile (file, te::SourceFileReference::PathStyle::chooseBest, false);
             ++count;
         }
 

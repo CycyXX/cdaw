@@ -61,6 +61,29 @@ namespace cdaw
             pointer.addRoundedRectangle (-1.5f, -body + 2.0f, 3.0f, body * 0.55f, 1.5f);
             g.setColour (isEnabled() ? Palette::text : Palette::textDisabled);
             g.fillPath (pointer, juce::AffineTransform::rotation (to).translated (centre));
+
+            // Modulation: the reachable range faintly on an outer ring, where it is now brightly.
+            const auto ring = radius - thickness * 0.1f;
+            auto toParamAngle = [&] (float paramValue) { return toAngle (owner.toDial (paramValue)); };
+
+            if (owner.modulationRange.has_value())
+            {
+                auto a = toParamAngle (owner.modulationRange->getStart()), b = toParamAngle (owner.modulationRange->getEnd());
+                juce::Path range;
+                range.addCentredArc (centre.x, centre.y, ring, ring, 0.0f, juce::jmin (a, b), juce::jmax (a, b) + 0.001f, true);
+                g.setColour (Palette::text.withAlpha (0.28f));
+                g.strokePath (range, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            }
+
+            if (owner.modulatedNow.has_value())
+            {
+                auto now = toParamAngle (*owner.modulatedNow);
+                juce::Path moved;
+                moved.addCentredArc (centre.x, centre.y, ring, ring, 0.0f, juce::jmin (to, now), juce::jmax (to, now) + 0.001f, true);
+                g.setColour (owner.colour.brighter (0.6f));
+                g.strokePath (moved, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                g.fillEllipse (juce::Rectangle<float> (5.0f, 5.0f).withCentre (centre.getPointOnCircumference (ring, now)));
+            }
         }
 
         ParamKnob& owner;
@@ -124,6 +147,17 @@ namespace cdaw
     void ParamKnob::setColour (juce::Colour c)
     {
         colour = c;
+        dial->repaint();
+    }
+
+    void ParamKnob::setModulation (std::optional<juce::Range<float>> range, std::optional<float> now)
+    {
+        auto same = [] (auto& a, auto& b) { return a.has_value() == b.has_value() && (! a.has_value() || *a == *b); };
+        if (same (range, modulationRange) && same (now, modulatedNow))
+            return;
+
+        modulationRange = range;
+        modulatedNow = now;
         dial->repaint();
     }
 

@@ -1,6 +1,7 @@
 #include "TestEngine.h"
 #include "Model/ArrangerOps.h"
 #include "Model/AutomationOps.h"
+#include "Model/TempoOps.h"
 
 namespace cdaw::test
 {
@@ -95,6 +96,51 @@ namespace cdaw::test
                 expectEquals (song.sectionOrder(), juce::String ("BCA"));
                 expectEquals (song.clipAt (1.0), juce::String ("B"));
                 expectEquals (song.clipAt (5.0), juce::String ("A"));
+            }
+
+            beginTest ("Undoing a section move brings everything back");
+            {
+                Song song (engine);
+                auto& edit = *song.edit;
+                auto& um = edit.getUndoManager();
+                auto& ts = edit.tempoSequence;
+
+                // A tempo change later in the song, as in a slower outro.
+                TempoOps::setTempoAt (edit, te::TimePosition::fromSeconds (4.0), 90.0);
+
+                // A clip with fades, reaching a hair past its section's end: rounding does that.
+                auto* last = ArrangerOps::getSections (edit)[2];
+                ArrangerOps::resizeSection (*last, secs (4.0, 6.0 - 1.0e-6));
+                dynamic_cast<te::AudioClipBase&> (*song.track->getClips()[2]).setFadeIn (te::TimeDuration::fromSeconds (0.01));
+                dynamic_cast<te::AudioClipBase&> (*song.track->getClips()[2]).setFadeOut (te::TimeDuration::fromSeconds (0.01));
+
+                auto layout = [&]
+                {
+                    juce::String s;
+                    for (auto c : song.track->getClips())
+                    {
+                        s << c->getName() << " " << juce::String (c->getPosition().getStart().inSeconds(), 4) << "-"
+                          << juce::String (c->getPosition().getEnd().inSeconds(), 4) << " @" << juce::String (c->getPosition().getOffset().inSeconds(), 4);
+                        if (auto* a = dynamic_cast<te::AudioClipBase*> (c))
+                            s << " fades " << juce::String (a->getFadeIn().inSeconds(), 3) << "/" << juce::String (a->getFadeOut().inSeconds(), 3);
+                        s << "; ";
+                    }
+                    for (int i = 0; i < ts.getNumTempos(); ++i)
+                        s << "tempo " << juce::String (ts.getTempo (i)->getBpm(), 2) << " at beat " << juce::String (ts.getTempo (i)->getStartBeat().inBeats(), 4) << "; ";
+                    s << song.sectionOrder();
+                    return s;
+                };
+
+                const auto before = layout();
+                um.beginNewTransaction ("Move");
+                ArrangerOps::moveSection (edit, *ArrangerOps::getSections (edit)[2], te::TimePosition());
+                const auto moved = layout();
+                expect (moved != before);
+                um.undo();
+                logMessage ("Before: " + before);
+                logMessage ("Moved:  " + moved);
+                logMessage ("Undone: " + layout());
+                expectEquals (layout(), before);
             }
 
             beginTest ("Duplicating a section inserts a copy after it");

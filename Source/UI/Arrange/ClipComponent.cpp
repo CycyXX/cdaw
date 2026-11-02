@@ -2,6 +2,7 @@
 #include "../LookAndFeel/Palette.h"
 #include "../../Model/ClipOps.h"
 #include "../../Model/CompOps.h"
+#include "../../Model/GroupEdit.h"
 
 namespace cdaw
 {
@@ -99,8 +100,8 @@ namespace cdaw
         g.setFont (juce::FontOptions (11.5f));
         auto label = clip->getName();
 
-        if (auto wc = dynamic_cast<te::WaveAudioClip*> (clip.get()); wc != nullptr && CompOps::hasTakes (*wc))
-            label << "   [take " << (CompOps::getActiveTake (*wc) + 1) << "/" << CompOps::getNumTakes (*wc) << "]";
+        if (CompOps::hasTakes (*clip))
+            label << "   [take " << (CompOps::getActiveTake (*clip) + 1) << "/" << CompOps::getNumTakes (*clip) << "]";
         if (clip->isLooping())
             label << "   (loop)";
         if (muted)
@@ -575,7 +576,7 @@ namespace cdaw
                 }
 
             if (! sm.isSelected (clip.get()))
-                sm.selectOnly (clip.get());
+                GroupEdit::selectClip (sm, *clip, false);
 
             host.showClipMenu (*clip);
             return;
@@ -585,8 +586,8 @@ namespace cdaw
         {
             auto t = viewState.snap (viewState.xToTime (getX() + e.x));
             edit.getUndoManager().beginNewTransaction ("Split clip");
-            if (auto ct = clip->getClipTrack())
-                ct->splitClip (*clip, t);
+            if (auto* track = clip->getTrack())
+                GroupEdit::splitAt (*track, t);
             return;
         }
 
@@ -594,15 +595,23 @@ namespace cdaw
         {
             edit.getUndoManager().beginNewTransaction ("Delete clip");
             auto keep = clip;
-            sm.deselect (clip.get());
-            clip->removeFromParent();
+
+            for (auto c : GroupEdit::getLinkedClips (*clip))
+            {
+                sm.deselect (c);
+                c->removeFromParent();
+            }
+
             return;
         }
 
         if (tool == Tool::mute)
         {
             edit.getUndoManager().beginNewTransaction ("Mute clip");
-            ClipOps::setMuted ({ clip.get() }, ! clip->isMuted());
+            juce::Array<te::Clip*> toMute;
+            for (auto c : GroupEdit::getLinkedClips (*clip))
+                toMute.add (c);
+            ClipOps::setMuted (toMute, ! clip->isMuted());
             return;
         }
 
@@ -613,18 +622,27 @@ namespace cdaw
         if (dragZone == Zone::slip)
         {
             if (! sm.isSelected (clip.get()))
-                sm.selectOnly (clip.get());
+                GroupEdit::selectClip (sm, *clip, false);
         }
         else if (e.mods.isShiftDown() || e.mods.isCommandDown())
         {
             if (sm.isSelected (clip.get()) && e.mods.isCommandDown())
-                sm.deselect (clip.get());
+                GroupEdit::deselectClip (sm, *clip);
             else
-                sm.addToSelection (clip.get());
+                GroupEdit::selectClip (sm, *clip, true);
         }
         else if (! sm.isSelected (clip.get()))
         {
-            sm.selectOnly (clip.get());
+            GroupEdit::selectClip (sm, *clip, false);
+        }
+
+        // Trims, fades, gain and slips follow on the clips linked to this one by group editing.
+        linkedClips.clear();
+
+        for (auto c : GroupEdit::getLinkedClips (*clip))
+        {
+            auto* ac = dynamic_cast<te::AudioClipBase*> (c);
+            linkedClips.push_back ({ c, ac != nullptr ? ac->getGainDB() : 0.0f, c->getPosition().getOffset() });
         }
 
         const char* undoName = "Edit clip";
@@ -640,9 +658,6 @@ namespace cdaw
         }
 
         edit.getUndoManager().beginNewTransaction (undoName);
-
-        if (auto ac = dynamic_cast<te::AudioClipBase*> (clip.get()))
-            dragStartGainDb = ac->getGainDB();
 
         dragStartOffset = clip->getPosition().getOffset();
 
@@ -672,57 +687,69 @@ namespace cdaw
                 break;
 
             case Zone::trimStart:
-                ClipOps::trimStart (*clip, e.mods.isAltDown() ? t : viewState.snap (t));
+                for (auto& l : linkedClips)
+                    ClipOps::trimStart (*l.clip, e.mods.isAltDown() ? t : viewState.snap (t));
+
                 dragInfo = "Length " + juce::String (clip->getPosition().getLength().inSeconds(), 2) + " s";
                 break;
 
             case Zone::trimEnd:
-                ClipOps::trimEnd (*clip, e.mods.isAltDown() ? t : viewState.snap (t));
+                for (auto& l : linkedClips)
+                    ClipOps::trimEnd (*l.clip, e.mods.isAltDown() ? t : viewState.snap (t));
+
                 dragInfo = "Length " + juce::String (clip->getPosition().getLength().inSeconds(), 2) + " s";
                 break;
 
             case Zone::fadeIn:
+                for (auto& l : linkedClips)
+                    if (auto ac = dynamic_cast<te::AudioClipBase*> (l.clip.get()))
+                        ac->setFadeIn (juce::jlimit (te::TimeDuration(), ac->getPosition().getLength(), t - ac->getPosition().getStart()));
+
                 if (auto ac = dynamic_cast<te::AudioClipBase*> (clip.get()))
-                {
-                    ac->setFadeIn (juce::jlimit (te::TimeDuration(), ac->getPosition().getLength(), t - ac->getPosition().getStart()));
                     dragInfo = "Fade in " + ms (ac->getFadeIn());
-                }
                 break;
 
             case Zone::fadeOut:
+                for (auto& l : linkedClips)
+                    if (auto ac = dynamic_cast<te::AudioClipBase*> (l.clip.get()))
+                        ac->setFadeOut (juce::jlimit (te::TimeDuration(), ac->getPosition().getLength(), ac->getPosition().getEnd() - t));
+
                 if (auto ac = dynamic_cast<te::AudioClipBase*> (clip.get()))
-                {
-                    ac->setFadeOut (juce::jlimit (te::TimeDuration(), ac->getPosition().getLength(), ac->getPosition().getEnd() - t));
                     dragInfo = "Fade out " + ms (ac->getFadeOut());
-                }
                 break;
 
             case Zone::gain:
-                if (auto ac = dynamic_cast<te::AudioClipBase*> (clip.get()))
-                {
-                    // 4 px per dB (Shift for fine steps), -48 .. +12 dB.
-                    auto perPixel = e.mods.isShiftDown() ? 0.05f : 0.25f;
-                    auto db = juce::jlimit (-48.0f, 12.0f, dragStartGainDb - (float) e.getDistanceFromDragStartY() * perPixel);
-                    ac->setGainDB (std::round (db * 10.0f) / 10.0f);
-                    dragInfo.clear();   // the handle shows the value
-                }
+            {
+                // 4 px per dB (Shift for fine steps), -48 .. +12 dB. Each clip moves by the same amount.
+                auto perPixel = e.mods.isShiftDown() ? 0.05f : 0.25f;
+                auto change = -(float) e.getDistanceFromDragStartY() * perPixel;
+
+                for (auto& l : linkedClips)
+                    if (auto ac = dynamic_cast<te::AudioClipBase*> (l.clip.get()))
+                        ac->setGainDB (std::round (juce::jlimit (-48.0f, 12.0f, l.startGainDb + change) * 10.0f) / 10.0f);
+
+                dragInfo.clear();   // the handle shows the value
                 break;
+            }
 
             case Zone::slip:
             {
                 // The content follows the mouse; the clip stays where it is.
                 auto delta = te::TimeDuration::fromSeconds (e.getDistanceFromDragStartX() / viewState.pixelsPerSecond.get());
-                auto offset = dragStartOffset - delta;
-                auto maxOffset = te::TimeDuration::fromSeconds (1.0e7);
 
-                if (auto ac = dynamic_cast<te::AudioClipBase*> (clip.get()); ac != nullptr && ! ac->isLooping())
-                    maxOffset = juce::jmax (te::TimeDuration(),
-                                            te::TimeDuration::fromSeconds (ac->getSourceLength().inSeconds() / ac->getSpeedRatio())
-                                              - ac->getPosition().getLength());
+                for (auto& l : linkedClips)
+                {
+                    auto maxOffset = te::TimeDuration::fromSeconds (1.0e7);
 
-                offset = juce::jlimit (te::TimeDuration(), maxOffset, offset);
-                clip->setOffset (offset);
-                auto moved = offset - dragStartOffset;
+                    if (auto ac = dynamic_cast<te::AudioClipBase*> (l.clip.get()); ac != nullptr && ! ac->isLooping())
+                        maxOffset = juce::jmax (te::TimeDuration(),
+                                                te::TimeDuration::fromSeconds (ac->getSourceLength().inSeconds() / ac->getSpeedRatio())
+                                                  - ac->getPosition().getLength());
+
+                    l.clip->setOffset (juce::jlimit (te::TimeDuration(), maxOffset, l.startOffset - delta));
+                }
+
+                auto moved = clip->getPosition().getOffset() - dragStartOffset;
                 dragInfo = "Content " + juce::String (moved > te::TimeDuration() ? "-" : "+")
                            + ms (te::TimeDuration::fromSeconds (std::abs (moved.inSeconds())));
                 break;
@@ -742,10 +769,12 @@ namespace cdaw
         }
         else if (dragging && (dragZone == Zone::trimStart || dragZone == Zone::trimEnd))
         {
-            if (auto ct = clip->getClipTrack())
-                ClipOps::clearRangeForClip (*ct, clip->getEditTimeRange(), { clip.get() });
+            for (auto& l : linkedClips)
+                if (auto ct = l.clip->getClipTrack())
+                    ClipOps::clearRangeForClip (*ct, l.clip->getEditTimeRange(), { l.clip.get() });
         }
 
+        linkedClips.clear();
         inhibitor.reset();
         dragging = false;
         dragInfo.clear();
@@ -757,11 +786,12 @@ namespace cdaw
         // Double-click the gain handle: back to 0 dB.
         if (getZone (e.getPosition(), e.mods) == Zone::gain)
         {
-            if (auto ac = dynamic_cast<te::AudioClipBase*> (clip.get()))
-            {
-                clip->edit.getUndoManager().beginNewTransaction ("Reset clip gain");
-                ac->setGainDB (0.0f);
-            }
+            clip->edit.getUndoManager().beginNewTransaction ("Reset clip gain");
+
+            for (auto c : GroupEdit::getLinkedClips (*clip))
+                if (auto ac = dynamic_cast<te::AudioClipBase*> (c))
+                    ac->setGainDB (0.0f);
+
             return;
         }
 

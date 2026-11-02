@@ -9,4 +9,13 @@ namespace cdaw::DebugProfiler
         the caller (the message thread), or with hottestThread the busiest thread in the process.
         Windows only. Started by CDAW_DEBUG_PROFILE=<seconds> (CDAW_DEBUG_PROFILE_HOT=1 for the busiest thread). */
     void start (double seconds, bool hottestThread = false);
+
+    /** A handle to the calling thread that other threads can use with captureStack(); give it
+        back with releaseThreadHandle(). */
+    void* currentThreadHandle();
+    void releaseThreadHandle (void*);
+
+    /** The thread's call stack right now, one "module!function" per line (innermost first), from
+        another thread. Shows which plugin or driver a stuck thread is inside. Windows only. */
+    juce::String captureStack (void* threadHandle);
 }

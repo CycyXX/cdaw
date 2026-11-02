@@ -87,6 +87,7 @@ namespace cdaw
         bool isCommandTicked (juce::CommandID) const;
 
         juce::Label barsBeatsLabel, timeLabel, sigLabel;
+        juce::TextButton keyButton;
         DragNumberField tempoField;
         juce::ComboBox gridBox;
         bool triggerRefresh = false;

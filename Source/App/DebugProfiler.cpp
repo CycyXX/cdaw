@@ -217,7 +217,66 @@ namespace cdaw::DebugProfiler
             report (*samples, seconds);
         }).detach();
     }
+    void* currentThreadHandle()
+    {
+        HANDLE h = nullptr;
+        DuplicateHandle (GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &h,
+                         THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0);
+        return h;
+    }
+
+    void releaseThreadHandle (void* h)
+    {
+        if (h != nullptr)
+            CloseHandle (static_cast<HANDLE> (h));
+    }
+
+    juce::String captureStack (void* threadHandle)
+    {
+        auto target = static_cast<HANDLE> (threadHandle);
+        if (target == nullptr)
+            return {};
+
+        // Nothing may allocate while the thread is suspended (it may hold the heap lock).
+        Sample sample;
+
+        if (SuspendThread (target) == (DWORD) -1)
+            return {};
+
+        CONTEXT ctx {};
+        ctx.ContextFlags = CONTEXT_FULL;
+        if (GetThreadContext (target, &ctx))
+            sample.numFrames = unwind (ctx, sample.pcs);
+
+        ResumeThread (target);
+
+        auto process = GetCurrentProcess();
+        SymSetOptions (SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+        SymInitialize (process, nullptr, TRUE);
+        std::map<DWORD64, juce::String> names;
+        juce::String text;
+
+        for (int i = 0; i < sample.numFrames; ++i)
+        {
+            juce::String module ("?");
+            HMODULE handle = nullptr;
+            wchar_t path[MAX_PATH] = {};
+
+            if (GetModuleHandleExW (GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                    reinterpret_cast<LPCWSTR> (sample.pcs[i]), &handle)
+                && GetModuleFileNameW (handle, path, MAX_PATH) > 0)
+                module = juce::File (juce::String (path)).getFileName();
+
+            text << "    " << module << "!" << nameFor (process, sample.pcs[i], names).substring (0, 120) << "\n";
+        }
+
+        SymCleanup (process);
+        return text;
+    }
    #else
     void start (double, bool) {}
+    void* currentThreadHandle()             { return nullptr; }
+    void releaseThreadHandle (void*)        {}
+    juce::String captureStack (void*)       { return {}; }
    #endif
 }

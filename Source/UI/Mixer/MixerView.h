@@ -13,6 +13,14 @@ namespace cdaw
     class SpectrumView;
     class InputsPanel;
 
+    /** The loudest level a strip has seen, as a number. Click to clear it. */
+    class PeakReadout : public juce::Label
+    {
+    public:
+        std::function<void()> onClick;
+        void mouseDown (const juce::MouseEvent&) override   { if (onClick) onClick(); }
+    };
+
     /** One mixer channel: name, routing, inserts, sends, pan, fader, meter, M/S/R. */
     class ChannelStrip : public juce::Component,
                          private juce::Timer,
@@ -78,6 +86,7 @@ namespace cdaw
         juce::Slider fader;
         PanKnob pan;
         juce::Label dbLabel, nameLabel;
+        PeakReadout peakLabel;
         juce::TextButton muteButton { "M" }, soloButton { "S" }, armButton { "R" }, monitorButton { "I" }, outputButton, inputButton;
         juce::TextButton spectrumButton { "Spectrum" };
         bool updating = false;

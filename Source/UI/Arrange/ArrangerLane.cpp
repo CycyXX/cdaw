@@ -1,6 +1,7 @@
 #include "ArrangerLane.h"
 #include "../LookAndFeel/Palette.h"
 #include "../../Model/ArrangerOps.h"
+#include "../../Model/SongNotes.h"
 
 namespace cdaw
 {
@@ -20,6 +21,30 @@ namespace cdaw
 
         setTooltip ("Song sections. Drag to create, drag a section to move it with all its tracks "
                     "(Alt-drag copies), double-click to rename, right-click for more.");
+    }
+
+    juce::String ArrangerLane::getTooltip()
+    {
+        // Over a section with lyrics: the lyrics (the first lines of them).
+        if (auto s = sectionAt (getMouseXYRelative().x))
+        {
+            auto lyrics = SongNotes::getLyrics (*s).trim();
+
+            if (lyrics.isNotEmpty())
+            {
+                juce::StringArray lines;
+                lines.addLines (lyrics);
+                if (lines.size() > 12)
+                {
+                    lines.removeRange (12, lines.size());
+                    lines.add (juce::String::fromUTF8 ("\xe2\x80\xa6"));
+                }
+
+                return s->getName() + "\n\n" + lines.joinIntoString ("\n");
+            }
+        }
+
+        return SettableTooltipClient::getTooltip();
     }
 
     ArrangerLane::~ArrangerLane()
@@ -185,6 +210,16 @@ namespace cdaw
             auto bars = ts.toBarsAndBeats (s->getPosition().getEnd()).getTotalBars()
                         - ts.toBarsAndBeats (s->getPosition().getStart()).getTotalBars();
             auto ink = colour.getPerceivedBrightness() > 0.55f ? juce::Colours::black : juce::Colours::white;
+
+            // Lyrics written for it: a small text mark at the right end.
+            if (SongNotes::getLyrics (*s).isNotEmpty() && textArea.getWidth() > 40)
+            {
+                auto mark = textArea.removeFromRight (12).toFloat().withSizeKeepingCentre (10.0f, 9.0f);
+                g.setColour (ink.withAlpha (0.7f));
+                for (int i = 0; i < 3; ++i)
+                    g.fillRect (mark.getX(), mark.getY() + (float) i * 3.5f, i == 2 ? mark.getWidth() * 0.6f : mark.getWidth(), 1.5f);
+                textArea.removeFromRight (4);
+            }
 
             g.setColour (ink);
             g.setFont (juce::FontOptions (12.5f, juce::Font::bold));
@@ -504,6 +539,8 @@ namespace cdaw
         juce::PopupMenu m;
         m.addSectionHeader (section.getName());
         m.addItem ("Rename...", [this, s] { startRename (*s); });
+        m.addItem (SongNotes::getLyrics (section).isEmpty() ? "Write Lyrics..." : "Edit Lyrics...",
+                   onEditLyrics != nullptr, false, [this, s] { if (onEditLyrics) onEditLyrics (*s); });
 
         juce::PopupMenu names;
         for (auto& name : ArrangerOps::getPresetNames())

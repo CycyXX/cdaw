@@ -5,7 +5,10 @@
 #include "../Commands/CommandIDs.h"
 #include "../UI/Project/MissingFilesDialog.h"
 #include "../Engine/AudioDeviceSetup.h"
+#include "../Engine/CDAWEngine.h"
 #include "../Model/ClipOps.h"
+#include "../Model/CompOps.h"
+#include "../Model/GroupEdit.h"
 #include "../Model/ProjectSession.h"
 #include "../Model/TrackOps.h"
 #include "../Model/TempoOps.h"
@@ -26,8 +29,8 @@ namespace cdaw
             CommandIDs::newProject, CommandIDs::openProject, CommandIDs::saveProject, CommandIDs::saveProjectAs,
             CommandIDs::revealProjectFolder, CommandIDs::locateMissingFiles, CommandIDs::showAudioSettings, CommandIDs::showPreferences, CommandIDs::importAudio,
             CommandIDs::importMidi, CommandIDs::exportMixdown, CommandIDs::exportStems, CommandIDs::exportMidi,
-            CommandIDs::importDawProject, CommandIDs::exportDawProject,
-            juce::StandardApplicationCommandIDs::quit,
+            CommandIDs::importDawProject, CommandIDs::exportDawProject, CommandIDs::saveNewVersion, CommandIDs::saveAsTemplate,
+            CommandIDs::importCubaseProject, CommandIDs::reconnectAudioDevice, juce::StandardApplicationCommandIDs::quit,
 
             CommandIDs::undo, CommandIDs::redo, CommandIDs::deleteSelection, CommandIDs::duplicate,
             CommandIDs::selectAll, CommandIDs::deselectAll, CommandIDs::splitAtCursor, CommandIDs::muteClips,
@@ -47,13 +50,17 @@ namespace cdaw
             CommandIDs::addGroupTrack, CommandIDs::addFolderTrack, CommandIDs::deleteTrack, CommandIDs::duplicateTrack,
             CommandIDs::moveTrackUp, CommandIDs::moveTrackDown,
             CommandIDs::toggleArm, CommandIDs::toggleMute, CommandIDs::toggleSolo,
+            CommandIDs::toggleGroupEdit, CommandIDs::groupSelectedTracks,
+
+            CommandIDs::nextTake, CommandIDs::prevTake, CommandIDs::toggleTakeLanes,
+            CommandIDs::unpackTakes, CommandIDs::deleteUnusedTakes, CommandIDs::flattenTakes,
 
             CommandIDs::toolSelect, CommandIDs::toolRange, CommandIDs::toolSplit,
             CommandIDs::toolDraw, CommandIDs::toolErase, CommandIDs::toolMute,
 
             CommandIDs::openPluginFromFile, CommandIDs::showPluginManager, CommandIDs::toggleInspector,
             CommandIDs::toggleEditor, CommandIDs::toggleMixer, CommandIDs::toggleAutomation,
-            CommandIDs::toggleArranger, CommandIDs::toggleSpectrum
+            CommandIDs::toggleArranger, CommandIDs::toggleSpectrum, CommandIDs::toggleNotes
         };
 
         c.addArray (ids, juce::numElementsInArray (ids));
@@ -75,6 +82,15 @@ namespace cdaw
 
         const Lazy hasClips { [sm] { return sm != nullptr && ! ClipOps::getSelectedClips (*sm).isEmpty(); } };
         const Lazy hasTrack { [this] { return arrangeView != nullptr && arrangeView->getFirstSelectedTrack() != nullptr; } };
+        const Lazy hasTakes { [sm]
+        {
+            if (sm != nullptr)
+                for (auto c : ClipOps::getSelectedClips (*sm))
+                    if (CompOps::hasTakes (*c))
+                        return true;
+
+            return false;
+        } };
         const bool hasRange = vs != nullptr && vs->hasRange();
 
         using KP = juce::KeyPress;
@@ -95,8 +111,11 @@ namespace cdaw
             case CommandIDs::openProject:         set ("Open Project...", "Open a project", CommandCategories::file); info.addDefaultKeypress ('o', ctrl); break;
             case CommandIDs::saveProject:         set ("Save", "Save the project", CommandCategories::file, hasSession); info.addDefaultKeypress ('s', ctrl); break;
             case CommandIDs::saveProjectAs:       set ("Save As...", "Save under a new name", CommandCategories::file, hasSession); info.addDefaultKeypress ('s', ctrl | shift); break;
+            case CommandIDs::saveNewVersion:      set ("Save New Version...", "Save as the next numbered version (Song_02, Song_03 ...) beside this one, with a note on what changed", CommandCategories::file, hasSession); info.addDefaultKeypress ('s', ctrl | alt); break;
+            case CommandIDs::saveAsTemplate:      set ("Save as Template...", "Save this project's tracks, routing and plugins (without clips) as a template for new projects", CommandCategories::file, hasSession); break;
             case CommandIDs::revealProjectFolder: set ("Show Project Folder", "Open the project folder in Explorer", CommandCategories::file, hasSession); break;
             case CommandIDs::showAudioSettings:   set ("Audio Settings...", "Audio device, sample rate and buffer size", CommandCategories::file); break;
+            case CommandIDs::reconnectAudioDevice: set ("Reconnect Audio Device", "Open the chosen audio interface again (e.g. after another program released it)", CommandCategories::file); break;
             case CommandIDs::showPreferences:     set ("Preferences...", "Audio, MIDI, recording, plugins and shortcuts", CommandCategories::file); info.addDefaultKeypress (',', ctrl); break;
             case CommandIDs::importAudio:         set ("Import Audio...", "Import audio files at the playhead", CommandCategories::file, hasSession); info.addDefaultKeypress ('i', ctrl); break;
             case CommandIDs::importMidi:          set ("Import MIDI File...", "Import a MIDI file at the playhead", CommandCategories::file, hasSession); info.addDefaultKeypress ('i', ctrl | shift); break;
@@ -104,6 +123,7 @@ namespace cdaw
             case CommandIDs::exportStems:         set ("Export Stems...", "Render each track to its own file", CommandCategories::file, hasSession); break;
             case CommandIDs::locateMissingFiles:  set ("Locate Missing Files...", "Find audio files this project can't find, or point CDAW at them", CommandCategories::file, hasSession); break;
             case CommandIDs::importDawProject:    set ("Import DAWproject...", "Open a .dawproject (Cubase, Bitwig, Studio One...) as a new CDAW project", CommandCategories::file, true); break;
+            case CommandIDs::importCubaseProject: set ("Import Cubase Project...", "Open a Cubase / Nuendo project (.cpr) as a new CDAW project", CommandCategories::file, true); break;
             case CommandIDs::exportDawProject:    set ("Export DAWproject...", "Save this project as a .dawproject for other DAWs", CommandCategories::file, hasSession); break;
             case CommandIDs::exportMidi:          set ("Export MIDI File...", "Write selected (or all) MIDI clips to a .mid file", CommandCategories::file, hasSession); break;
             case juce::StandardApplicationCommandIDs::quit:
@@ -215,6 +235,27 @@ namespace cdaw
             case CommandIDs::toggleArm:           set ("Record Enable Track", "Toggle record enable on selected tracks", CommandCategories::track, hasTrack); info.addDefaultKeypress ('r', 0); break;
             case CommandIDs::toggleMute:          set ("Mute Track", "Toggle mute on selected tracks", CommandCategories::track, hasTrack); info.addDefaultKeypress ('m', 0); break;
             case CommandIDs::toggleSolo:          set ("Solo Track", "Toggle solo on selected tracks", CommandCategories::track, hasTrack); info.addDefaultKeypress ('s', 0); break;
+            case CommandIDs::toggleGroupEdit:
+            {
+                auto* track = hasTrack ? arrangeView->getFirstSelectedTrack() : nullptr;
+                auto* folder = track != nullptr ? GroupEdit::findNearestFolder (*track) : nullptr;
+                set ("Group Editing", "Edit the tracks in the selected track's folder as one", CommandCategories::track, folder != nullptr);
+                info.setTicked (folder != nullptr && GroupEdit::isEnabled (*folder));
+                info.addDefaultKeypress ('g', ctrl);
+                break;
+            }
+            case CommandIDs::groupSelectedTracks: set ("Group Selected Tracks", "Put the selected tracks in a new folder with group editing on", CommandCategories::track, hasTrack); info.addDefaultKeypress ('g', ctrl | shift); break;
+
+            // Takes
+            case CommandIDs::nextTake:            set ("Next Take", "Play the next take in the selected clips", CommandCategories::takes, hasTakes); info.addDefaultKeypress (KP::downKey, ctrl); break;
+            case CommandIDs::prevTake:            set ("Previous Take", "Play the previous take in the selected clips", CommandCategories::takes, hasTakes); info.addDefaultKeypress (KP::upKey, ctrl); break;
+            case CommandIDs::toggleTakeLanes:
+                set ("Show / Hide Take Lanes", "Toggle the take lanes of the selected tracks", CommandCategories::takes, hasTrack);
+                info.addDefaultKeypress ('t', 0);
+                break;
+            case CommandIDs::unpackTakes:         set ("Unpack Takes to New Tracks", "One new track per take of the selected clips", CommandCategories::takes, hasTakes); break;
+            case CommandIDs::deleteUnusedTakes:   set ("Delete Unused Takes", "Forget the takes the selected comps aren't playing (audio files stay on disk)", CommandCategories::takes, hasTakes); break;
+            case CommandIDs::flattenTakes:        set ("Flatten Takes", "Keep what plays and forget the take lists of the selected comps (audio files stay on disk)", CommandCategories::takes, hasTakes); break;
 
             // Tools
             case CommandIDs::toolSelect: set ("Select Tool", "Select and move", CommandCategories::tools, hasSession); info.addDefaultKeypress ('1', 0); info.setTicked (vs && vs->getTool() == Tool::select); break;
@@ -233,6 +274,11 @@ namespace cdaw
                 set ("Mixer", "Show / hide the mixer", CommandCategories::view, hasSession);
                 info.setTicked (showLowerZone && lowerZone != nullptr && lowerZone->getPage() == LowerZone::Page::mixer);
                 info.addDefaultKeypress (KP::F3Key, 0);
+                break;
+            case CommandIDs::toggleNotes:
+                set ("Notes and Lyrics", "Show / hide the song's notes and the lyrics of each section", CommandCategories::view, hasSession);
+                info.setTicked (showLowerZone && lowerZone != nullptr && lowerZone->getPage() == LowerZone::Page::notes);
+                info.addDefaultKeypress (KP::F4Key, 0);
                 break;
             case CommandIDs::toggleAutomation:
                 set ("Show / Hide Automation", "Toggle automation lanes on the selected tracks", CommandCategories::view, hasTrack);
@@ -271,6 +317,8 @@ namespace cdaw
 
         if (record)
         {
+            // The track's old take stays quiet under a new one, except for the lead-in to a punch.
+            CDAWEngineBehaviour::muteOldTakesWhilstRecording = ! s->getEdit().recordingPunchInOut.get();
             transport.record (false, false);
 
             if (! transport.isRecording())
@@ -334,6 +382,10 @@ namespace cdaw
             case CommandIDs::newProject:        newProjectDialog(); return true;
             case CommandIDs::openProject:       openProjectDialog(); return true;
             case CommandIDs::showAudioSettings: PreferencesDialog::show (0); return true;
+            case CommandIDs::reconnectAudioDevice:
+                if (ctx.deviceMonitor != nullptr)
+                    ctx.deviceMonitor->reconnect();
+                return true;
             case CommandIDs::showPreferences:   PreferencesDialog::show (0); return true;
             case CommandIDs::showPluginManager: PluginMenus::showPluginManager (ctx.engine()); return true;
             case juce::StandardApplicationCommandIDs::quit:
@@ -366,6 +418,8 @@ namespace cdaw
         {
             case CommandIDs::saveProject:         saveProject(); return true;
             case CommandIDs::saveProjectAs:       saveProjectAsDialog(); return true;
+            case CommandIDs::saveNewVersion:      saveNewVersionDialog(); return true;
+            case CommandIDs::saveAsTemplate:      saveAsTemplateDialog(); return true;
             case CommandIDs::revealProjectFolder: s->getEditFile().revealToUser(); return true;
             case CommandIDs::importAudio:         importAudioDialog(); return true;
             case CommandIDs::importMidi:          importMidiDialog(); return true;
@@ -374,6 +428,7 @@ namespace cdaw
             case CommandIDs::exportMidi:          exportMidiDialog(); return true;
             case CommandIDs::locateMissingFiles:  MissingFilesDialog::show (*s, true); return true;
             case CommandIDs::importDawProject:    importDawProjectDialog(); return true;
+            case CommandIDs::importCubaseProject: importCubaseProjectDialog(); return true;
             case CommandIDs::exportDawProject:    exportDawProjectDialog(); return true;
 
             case CommandIDs::undo:                edit.undo(); return true;
@@ -626,6 +681,111 @@ namespace cdaw
                 for (auto t : selectedTracks())
                     t->setSolo (! t->isSolo (false));
                 return true;
+            case CommandIDs::toggleGroupEdit:
+                if (auto* t = insertAfter())
+                {
+                    if (auto* folder = GroupEdit::findNearestFolder (*t))
+                    {
+                        const bool on = ! GroupEdit::isEnabled (*folder);
+                        GroupEdit::setEnabled (*folder, on);
+                        statusBar->showMessage ("Group editing " + juce::String (on ? "on" : "off") + " for " + folder->getName());
+                    }
+                }
+                return true;
+            case CommandIDs::groupSelectedTracks:
+            {
+                auto tracks = selectedTracks();
+
+                // Or the tracks of the selected clips.
+                if (tracks.isEmpty())
+                    for (auto c : ClipOps::getSelectedClips (sm))
+                        tracks.addIfNotAlreadyThere (c->getTrack());
+
+                um.beginNewTransaction ("Group tracks");
+                if (auto folder = GroupEdit::groupTracks (edit, &sm, tracks))
+                    statusBar->showMessage ("Grouped " + juce::String (folder->getAllSubTracks (true).size()) + " tracks in " + folder->getName() + ", group editing on");
+                return true;
+            }
+
+            // Takes
+            case CommandIDs::nextTake:
+            case CommandIDs::prevTake:
+            {
+                um.beginNewTransaction ("Choose take");
+                auto selected = ClipOps::getSelectedClips (sm);
+                juce::ReferenceCountedArray<te::Clip> pieces;
+
+                for (auto c : selected)
+                    pieces.add (c);
+
+                for (auto c : pieces)
+                    if (c->state.getParent().isValid() && CompOps::hasTakes (*c))
+                        CompOps::stepTake (*c, info.commandID == CommandIDs::nextTake ? 1 : -1);
+
+                return true;
+            }
+            case CommandIDs::toggleTakeLanes:
+            {
+                juce::Array<te::Track*> tracks = selectedTracks();
+
+                if (tracks.isEmpty())
+                    if (auto* t = insertAfter())
+                        tracks.add (t);
+
+                for (auto* t : tracks)
+                    EditViewState::setShowingTakes (*t, ! EditViewState::isShowingTakes (*t));
+
+                return true;
+            }
+            case CommandIDs::unpackTakes:
+            case CommandIDs::deleteUnusedTakes:
+            case CommandIDs::flattenTakes:
+            {
+                juce::ReferenceCountedArray<te::Clip> clips;
+
+                for (auto c : ClipOps::getSelectedClips (sm))
+                    if (CompOps::hasTakes (*c))
+                        clips.add (c);
+
+                if (info.commandID == CommandIDs::unpackTakes)
+                {
+                    um.beginNewTransaction ("Unpack takes");
+
+                    // A comp is unpacked once, not once per piece.
+                    juce::ReferenceCountedArray<te::Clip> done;
+
+                    for (auto c : clips)
+                    {
+                        if (! done.contains (c))
+                        {
+                            CompOps::unpackTakesToTracks (*c);
+                            done.addArray (CompOps::getComp (*c));
+                        }
+                    }
+
+                    return true;
+                }
+
+                um.beginNewTransaction (info.commandID == CommandIDs::flattenTakes ? "Flatten takes" : "Delete unused takes");
+
+                for (auto c : clips)
+                {
+                    if (! c->state.getChildWithName (te::IDs::TAKES).isValid())
+                        continue;
+
+                    if (info.commandID == CommandIDs::deleteUnusedTakes)
+                    {
+                        CompOps::deleteUnusedTakes (*c);
+                    }
+                    else
+                    {
+                        for (auto piece : CompOps::getComp (*c))
+                            CompOps::removeTakes (*piece);
+                    }
+                }
+
+                return true;
+            }
 
             // Tools
             case CommandIDs::toolSelect: vs.tool = (int) Tool::select; return true;
@@ -663,8 +823,11 @@ namespace cdaw
             }
             case CommandIDs::toggleEditor:
             case CommandIDs::toggleMixer:
+            case CommandIDs::toggleNotes:
             {
-                auto page = info.commandID == CommandIDs::toggleMixer ? LowerZone::Page::mixer : LowerZone::Page::editor;
+                auto page = info.commandID == CommandIDs::toggleMixer ? LowerZone::Page::mixer
+                          : info.commandID == CommandIDs::toggleNotes ? LowerZone::Page::notes
+                                                                      : LowerZone::Page::editor;
                 const bool isShowingThis = showLowerZone && lowerZone != nullptr && lowerZone->getPage() == page;
 
                 // Ctrl+E with a MIDI clip selected opens that clip.

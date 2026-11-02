@@ -20,11 +20,21 @@ namespace cdaw::AudioDeviceSetup
         return 1;
     }
 
+    /** Whether opening a device again with another sample rate or buffer size could work after this
+        error. Not when the driver is busy (in use by another program), missing or unplugged; each
+        further attempt on such a driver is one more call that can block (the Yamaha Steinberg USB
+        driver has hung CDAW's start while Cubase held it). */
+    static bool otherSettingsMightHelp (const juce::String& error)
+    {
+        return error.containsIgnoreCase ("rate") || error.containsIgnoreCase ("buffer") || error.containsIgnoreCase ("size");
+    }
+
     /** Opens exactly the named device. Uses an XML state because
         AudioDeviceManager::setCurrentAudioDeviceType() first opens the type's default
-        device, which for ASIO is the first registered driver (often a generic one). */
-    static bool tryOpenWith (juce::AudioDeviceManager& adm, const juce::String& typeName, const juce::String& deviceName,
-                             const juce::String& inputName, double rate, int bufferSize)
+        device, which for ASIO is the first registered driver (often a generic one).
+        Returns the error ("" when it opened). */
+    static juce::String tryOpenWith (juce::AudioDeviceManager& adm, const juce::String& typeName, const juce::String& deviceName,
+                                     const juce::String& inputName, double rate, int bufferSize)
     {
         juce::XmlElement xml ("DEVICESETUP");
         xml.setAttribute ("deviceType", typeName);
@@ -39,27 +49,42 @@ namespace cdaw::AudioDeviceSetup
                                      &xml, false);
 
         if (error.isEmpty() && adm.getCurrentAudioDevice() != nullptr)
-            return true;
+            return {};
+
+        if (error.isEmpty())
+            error = "no device";
 
         juce::Logger::writeToLog ("  " + typeName + " / " + deviceName + " @ " + juce::String (rate) + " Hz, "
-                                  + juce::String (bufferSize) + " smp: " + (error.isNotEmpty() ? error : juce::String ("no device")));
+                                  + juce::String (bufferSize) + " smp: " + error);
         adm.closeAudioDevice();
-        return false;
+        return error;
     }
 
-    /** Opens exactly the named device. Uses an XML state because
-        AudioDeviceManager::setCurrentAudioDeviceType() first opens the type's default
-        device, which for ASIO is the first registered driver (often a generic one).
-        Tries 48 kHz / 128 first, then the driver's own preferred settings. */
+    /** Opens exactly the named device: 48 kHz / 128 first, then the driver's own preferred
+        settings, unless the driver refuses outright. Devices that failed go into `failed`, and
+        devices already in it aren't tried again. */
     static bool tryOpen (juce::AudioDeviceManager& adm, const juce::String& typeName, const juce::String& deviceName,
-                         std::optional<juce::String> inputName = {})
+                         juce::StringArray& failed, std::optional<juce::String> inputName = {})
     {
+        if (failed.contains (typeName + "/" + deviceName))
+            return false;
+
         juce::Logger::writeToLog ("Trying audio device: " + typeName + " / " + deviceName);
         auto in = inputName.value_or (deviceName);
 
-        return tryOpenWith (adm, typeName, deviceName, in, 48000.0, 128)
-            || tryOpenWith (adm, typeName, deviceName, in, 48000.0, 0)
-            || tryOpenWith (adm, typeName, deviceName, in, 0.0, 0);
+        for (auto [rate, block] : std::initializer_list<std::pair<double, int>> { { 48000.0, 128 }, { 48000.0, 0 }, { 0.0, 0 } })
+        {
+            auto error = tryOpenWith (adm, typeName, deviceName, in, rate, block);
+
+            if (error.isEmpty())
+                return true;
+
+            if (! otherSettingsMightHelp (error))
+                break;
+        }
+
+        failed.add (typeName + "/" + deviceName);
+        return false;
     }
 
     static juce::String getDefaultDeviceName (juce::AudioDeviceManager& adm, const juce::String& typeName, bool input = false)
@@ -127,6 +152,73 @@ namespace cdaw::AudioDeviceSetup
         return name.isNotEmpty() ? name : setup.getStringAttribute ("audioInputDeviceName");
     }
 
+    std::unique_ptr<juce::XmlElement> getPreferredDevice (AppSettings& settings)
+    {
+        return settings.getXml (preferredDeviceKey);
+    }
+
+    bool openPreferred (juce::AudioDeviceManager& adm, const juce::XmlElement& preferred, juce::StringArray& failed)
+    {
+        auto type = preferred.getStringAttribute ("deviceType");
+        auto out = preferred.getStringAttribute ("audioOutputDeviceName");
+        auto in = preferred.getStringAttribute ("audioInputDeviceName");
+
+        if (failed.contains (type + "/" + out))
+            return false;
+
+        auto error = tryOpenWith (adm, type, out, in, preferred.getDoubleAttribute ("audioDeviceRate"),
+                                  preferred.getIntAttribute ("audioDeviceBufferSize"));
+
+        if (error.isEmpty())
+            return true;
+
+        if (otherSettingsMightHelp (error))
+            return tryOpen (adm, type, out, failed, in);
+
+        failed.add (type + "/" + out);
+        return false;
+    }
+
+    bool openStandIn (juce::AudioDeviceManager& adm, juce::StringArray& failed)
+    {
+        for (auto* type : adm.getAvailableDeviceTypes())
+        {
+            if (type->getTypeName() != "ASIO")
+                continue;
+
+            type->scanForDevices();
+            auto names = type->getDeviceNames();
+
+            std::stable_sort (names.begin(), names.end(), [] (const juce::String& a, const juce::String& b)
+                              { return rankAsioDriver (a) < rankAsioDriver (b); });
+
+            for (auto& name : names)
+                if (rankAsioDriver (name) >= 0 && tryOpen (adm, "ASIO", name, failed))
+                    return true;
+        }
+
+        return tryOpen (adm, "Windows Audio", getDefaultDeviceName (adm, "Windows Audio"), failed,
+                        getDefaultDeviceName (adm, "Windows Audio", true));
+    }
+
+    // Message thread only. The device change a pick causes arrives asynchronously, possibly just
+    // after the settings closed: they count as showing for a moment longer.
+    static int settingsShowing = 0;
+    static double settingsClosedAt = -100.0;
+
+    ScopedSettingsShowing::ScopedSettingsShowing()      { ++settingsShowing; }
+
+    ScopedSettingsShowing::~ScopedSettingsShowing()
+    {
+        --settingsShowing;
+        settingsClosedAt = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    }
+
+    bool areSettingsShowing()
+    {
+        return settingsShowing > 0 || juce::Time::getMillisecondCounterHiRes() / 1000.0 - settingsClosedAt < 2.0;
+    }
+
     juce::String ensureAsioDefault (te::Engine& engine, AppSettings& settings)
     {
         auto& dm = engine.getDeviceManager();
@@ -149,46 +241,20 @@ namespace cdaw::AudioDeviceSetup
             }
         }
 
+        juce::StringArray failed;     // devices that wouldn't open this time: not tried again
+
         // The chosen device may have failed when the engine started (e.g. Cubase had it), or the
         // last start had to use a stand-in: try it again first.
         if (preferred != nullptr && ! isOpen (adm, *preferred))
         {
-            auto type = preferred->getStringAttribute ("deviceType");
-            auto out = preferred->getStringAttribute ("audioOutputDeviceName");
-            auto in = preferred->getStringAttribute ("audioInputDeviceName");
-            juce::Logger::writeToLog ("Trying the chosen audio device again: " + type + " / " + nameOf (*preferred));
-
-            if (! tryOpenWith (adm, type, out, in, preferred->getDoubleAttribute ("audioDeviceRate"),
-                               preferred->getIntAttribute ("audioDeviceBufferSize")))
-                tryOpen (adm, type, out, in);
+            juce::Logger::writeToLog ("Trying the chosen audio device again: " + preferred->getStringAttribute ("deviceType")
+                                      + " / " + nameOf (*preferred));
+            openPreferred (adm, *preferred, failed);
         }
 
         if (firstRun || adm.getCurrentAudioDevice() == nullptr)
         {
-            juce::AudioIODeviceType* asioType = nullptr;
-
-            for (auto* type : adm.getAvailableDeviceTypes())
-                if (type->getTypeName() == "ASIO")
-                    asioType = type;
-
-            bool opened = false;
-
-            if (asioType != nullptr)
-            {
-                asioType->scanForDevices();
-                auto names = asioType->getDeviceNames();
-
-                std::stable_sort (names.begin(), names.end(), [] (const juce::String& a, const juce::String& b)
-                                  { return rankAsioDriver (a) < rankAsioDriver (b); });
-
-                for (auto& name : names)
-                    if (rankAsioDriver (name) >= 0 && (opened = tryOpen (adm, "ASIO", name)))
-                        break;
-            }
-
-            if (! opened && adm.getCurrentAudioDevice() == nullptr)
-                opened = tryOpen (adm, "Windows Audio", getDefaultDeviceName (adm, "Windows Audio"),
-                                  getDefaultDeviceName (adm, "Windows Audio", true));
+            const bool opened = openStandIn (adm, failed);
 
             if (opened && firstRun)
             {
@@ -208,7 +274,7 @@ namespace cdaw::AudioDeviceSetup
         else if (! isOpen (adm, *preferred))
         {
             status = nameOf (*preferred) + " could not be opened (in use by another program, or not connected). Using "
-                     + status + " for now; CDAW tries it again next start.";
+                     + status + " for now; CDAW switches back when it's available.";
         }
 
         juce::Logger::writeToLog ("Audio device: " + status);
@@ -216,14 +282,9 @@ namespace cdaw::AudioDeviceSetup
     }
 
     //==============================================================================
-    PreferredDeviceTracker::PreferredDeviceTracker (juce::AudioDeviceManager& m, std::unique_ptr<juce::XmlElement> preferred,
-                                                    std::function<void (const juce::XmlElement&)> rememberFn)
+    PreferredDeviceTracker::PreferredDeviceTracker (juce::AudioDeviceManager& m, std::function<void (const juce::XmlElement&)> rememberFn)
         : adm (m), remember (std::move (rememberFn))
     {
-        // Started on a stand-in: that device is not a choice. Anything the user opens later is.
-        if (preferred != nullptr && ! isOpen (adm, *preferred))
-            standIn = describeOpenDevice (adm);
-
         adm.addChangeListener (this);
     }
 
@@ -234,18 +295,19 @@ namespace cdaw::AudioDeviceSetup
 
     void PreferredDeviceTracker::changeListenerCallback (juce::ChangeBroadcaster*)
     {
-        auto open = describeOpenDevice (adm);
-
-        if (open == nullptr || (standIn != nullptr && isOpen (adm, *standIn)))
+        // Only a device picked in the device settings is a choice. Devices opened otherwise
+        // (stand-ins at startup or by the AudioDeviceMonitor, or JUCE's own fallback when a
+        // Windows Audio device disappears) never replace it.
+        if (! areSettingsShowing())
             return;
 
-        standIn.reset();
-        remember (*open);
+        if (auto open = describeOpenDevice (adm))
+            remember (*open);
     }
 
     std::unique_ptr<PreferredDeviceTracker> trackPreferredDevice (te::Engine& engine, AppSettings& settings)
     {
-        return std::make_unique<PreferredDeviceTracker> (engine.getDeviceManager().deviceManager, settings.getXml (preferredDeviceKey),
+        return std::make_unique<PreferredDeviceTracker> (engine.getDeviceManager().deviceManager,
                                                          [&settings] (const juce::XmlElement& xml) { settings.setXml (preferredDeviceKey, &xml); });
     }
 
@@ -270,9 +332,15 @@ namespace cdaw::AudioDeviceSetup
 
     void showAudioSettings (te::Engine& engine)
     {
-        auto* selector = new juce::AudioDeviceSelectorComponent (engine.getDeviceManager().deviceManager,
-                                                                 0, 64, 0, 64,
-                                                                 false, false, false, false);
+        struct Selector : public juce::AudioDeviceSelectorComponent
+        {
+            using juce::AudioDeviceSelectorComponent::AudioDeviceSelectorComponent;
+            ScopedSettingsShowing showing;
+        };
+
+        auto* selector = new Selector (engine.getDeviceManager().deviceManager,
+                                       0, 64, 0, 64,
+                                       false, false, false, false);
         selector->setSize (520, 460);
 
         juce::DialogWindow::LaunchOptions o;

@@ -1,9 +1,17 @@
 #include "BuiltInPlugins.h"
+#include "ChorusPlugin.h"
 #include "CompressorPlugin.h"
+#include "DelayPlugin.h"
 #include "EqPlugin.h"
+#include "DistPlugin.h"
+#include "EsserPlugin.h"
+#include "FilterPlugin.h"
+#include "LeadPlugin.h"
 #include "MultibandPlugin.h"
+#include "PhaserPlugin.h"
 #include "ReverbPlugin.h"
 #include "SimpleReverbPlugin.h"
+#include "SynthPlugin.h"
 
 namespace cdaw::BuiltInPlugins
 {
@@ -15,6 +23,43 @@ namespace cdaw::BuiltInPlugins
         pm.createBuiltInType<MultibandPlugin>();
         pm.createBuiltInType<ReverbPlugin>();
         pm.createBuiltInType<SimpleReverbPlugin>();
+        pm.createBuiltInType<DelayPlugin>();
+        pm.createBuiltInType<ChorusPlugin>();
+        pm.createBuiltInType<PhaserPlugin>();
+        pm.createBuiltInType<FilterPlugin>();
+        pm.createBuiltInType<DistPlugin>();
+        pm.createBuiltInType<EsserPlugin>();
+        pm.createBuiltInType<SynthPlugin>();
+        pm.createBuiltInType<LeadPlugin>();
+    }
+
+    template <typename PluginType>
+    static juce::PluginDescription describe()
+    {
+        auto d = te::PluginManager::createBuiltInPluginDescription<PluginType>();
+        d.manufacturerName = "CDAW";
+        return d;
+    }
+
+    juce::PluginDescription getDelayDescription()       { return describe<DelayPlugin>(); }
+    juce::PluginDescription getChorusDescription()      { return describe<ChorusPlugin>(); }
+    juce::PluginDescription getPhaserDescription()      { return describe<PhaserPlugin>(); }
+    juce::PluginDescription getFilterDescription()      { return describe<FilterPlugin>(); }
+    juce::PluginDescription getDistDescription()        { return describe<DistPlugin>(); }
+    juce::PluginDescription getEsserDescription()       { return describe<EsserPlugin>(); }
+
+    juce::PluginDescription getSynthDescription()
+    {
+        auto d = te::PluginManager::createBuiltInPluginDescription<SynthPlugin> (true);
+        d.manufacturerName = "CDAW";
+        return d;
+    }
+
+    juce::PluginDescription getLeadDescription()
+    {
+        auto d = te::PluginManager::createBuiltInPluginDescription<LeadPlugin> (true);
+        d.manufacturerName = "CDAW";
+        return d;
     }
 
     juce::PluginDescription getCompressorDescription()
@@ -116,6 +161,104 @@ namespace cdaw::BuiltInPlugins
         p.setProperty (te::IDs::type, EqPlugin::xmlTypeName, nullptr);
     }
 
+    /** Removes a converted plugin's automation, except of the parameters it keeps. */
+    static void dropAutomation (juce::ValueTree& p, juce::StringArray keep = {})
+    {
+        for (int i = p.getNumChildren(); --i >= 0;)
+            if (auto child = p.getChild (i); child.hasType (te::IDs::AUTOMATIONCURVE) && ! keep.contains (child[te::IDs::paramID].toString()))
+                p.removeChild (i, nullptr);
+    }
+
+    /** Tracktion's simple effects crossfade dry and wet at equal power; CDAW's keep the dry at
+        full level up to 50 % mix. The mix that gives the same balance of wet to dry. */
+    static float convertMix (float oldMix)
+    {
+        if (oldMix >= 0.999f)
+            return 1.0f;
+
+        const double ratio = std::tan (juce::jlimit (0.0, 1.0, (double) oldMix) * juce::MathConstants<double>::halfPi);
+        return (float) (ratio <= 1.0 ? ratio * 0.5 : 1.0 - 0.5 / ratio);
+    }
+
+    static void setAll (juce::ValueTree& p, std::initializer_list<std::pair<const char*, float>> values)
+    {
+        for (auto& [id, value] : values)
+            p.setProperty (id, value, nullptr);
+    }
+
+    static void convertOldDelay (juce::ValueTree& p)
+    {
+        // Tracktion's delay: a length in ms, feedback in dB (-30 = none) and a wet / dry mix; no filtering.
+        const float feedbackDb = p.getProperty ("feedback", -6.0f);
+        const float oldMix = p.getProperty ("mix", 0.3f);
+        const int lengthMs = p.getProperty ("length", 150);
+
+        p.removeProperty ("length", nullptr);
+        using namespace DelayParameters;
+        setAll (p, { { get (time).id, (float) juce::jlimit (1, 2000, lengthMs) }, { get (sync).id, 0.0f },
+                     { get (feedback).id, feedbackDb > -30.0f ? juce::Decibels::decibelsToGain (juce::jmin (0.0f, feedbackDb)) : 0.0f },
+                     { get (mix).id, convertMix (oldMix) },
+                     { get (lowCut).id, DelayEngine::lowCutOff }, { get (highCut).id, DelayEngine::highCutOff } });
+
+        dropAutomation (p);     // feedback was in dB, the mix on another curve
+        p.setProperty (te::IDs::type, DelayPlugin::xmlTypeName, nullptr);
+    }
+
+    static void convertOldChorus (juce::ValueTree& p)
+    {
+        // Tracktion's chorus: one voice swept from 20 ms by up to depthMs, the right side up to half a cycle later.
+        const float depthMs = p.getProperty ("depthMs", 3.0f);
+        const float speedHz = p.getProperty ("speedHz", 1.0f);
+        const float oldWidth = p.getProperty ("width", 0.5f);
+        const float oldMix = p.getProperty ("mixProportion", 0.5f);
+
+        for (auto* id : { "depthMs", "speedHz", "mixProportion" })
+            p.removeProperty (id, nullptr);
+
+        using namespace ChorusParameters;
+        setAll (p, { { get (voices).id, 1.0f }, { get (delay).id, 20.0f }, { get (rate).id, juce::jlimit (0.03f, 10.0f, speedHz) },
+                     { get (depth).id, juce::jlimit (0.0f, 1.0f, depthMs / ChorusEngine::maxModulationMs) },
+                     { get (spread).id, juce::jlimit (0.0f, 1.0f, oldWidth * 2.0f) }, { get (feedback).id, 0.0f },
+                     { get (tone).id, ChorusEngine::toneOff }, { get (width).id, 1.0f }, { get (mix).id, convertMix (oldMix) } });
+
+        dropAutomation (p);
+        p.setProperty (te::IDs::type, ChorusPlugin::xmlTypeName, nullptr);
+    }
+
+    static void convertOldPhaser (juce::ValueTree& p)
+    {
+        // Tracktion's phaser: four stages swept from 100 Hz up `depth` octaves and back, `rate` cycles a
+        // second, `feedback` from the last stage; the dry signal added at full level.
+        const float depthOctaves = p.getProperty ("depth", 5.0f);
+        const float rateHz = p.getProperty ("rate", 0.4f);
+        const float feedbackGain = p.getProperty ("feedback", 0.7f);
+
+        using namespace PhaserParameters;
+        setAll (p, { { get (stages).id, 4.0f }, { get (sync).id, 0.0f }, { get (rate).id, juce::jlimit (0.02f, 10.0f, rateHz) },
+                     { get (centre).id, juce::jlimit (100.0f, 6000.0f, 100.0f * std::pow (2.0f, depthOctaves * 0.5f)) },
+                     { get (depth).id, juce::jlimit (0.0f, 1.0f, depthOctaves * 0.5f / PhaserEngine::maxOctaves) },
+                     { get (feedback).id, juce::jlimit (-0.9f, 0.9f, feedbackGain) }, { get (spread).id, 0.0f }, { get (mix).id, 0.5f } });
+
+        dropAutomation (p);
+        p.setProperty (te::IDs::type, PhaserPlugin::xmlTypeName, nullptr);
+    }
+
+    static void convertOldLowPass (juce::ValueTree& p)
+    {
+        // Tracktion's low / high-pass: 12 dB/oct Butterworth at "frequency" (the same ID as C-Filter's cutoff).
+        const float hz = p.getProperty ("frequency", 4000.0f);
+        const bool highPass = p.getProperty ("mode", "lowpass").toString() == "highpass";
+
+        p.removeProperty ("mode", nullptr);
+        using namespace FilterParameters;
+        setAll (p, { { get (type).id, highPass ? 1.0f : 0.0f }, { get (slope).id, 0.0f },
+                     { get (cutoff).id, juce::jlimit (FilterEngine::minHz, FilterEngine::maxHz, hz) },
+                     { get (resonance).id, 0.0f }, { get (mix).id, 1.0f } });
+
+        dropAutomation (p, { get (cutoff).id });
+        p.setProperty (te::IDs::type, FilterPlugin::xmlTypeName, nullptr);
+    }
+
     int migrateEditState (juce::ValueTree& editState)
     {
         int converted = 0;
@@ -139,6 +282,26 @@ namespace cdaw::BuiltInPlugins
                 else if (type == te::ReverbPlugin::xmlTypeName)
                 {
                     convertOldReverb (v);
+                    ++converted;
+                }
+                else if (type == te::DelayPlugin::xmlTypeName)
+                {
+                    convertOldDelay (v);
+                    ++converted;
+                }
+                else if (type == te::ChorusPlugin::xmlTypeName)
+                {
+                    convertOldChorus (v);
+                    ++converted;
+                }
+                else if (type == te::PhaserPlugin::xmlTypeName)
+                {
+                    convertOldPhaser (v);
+                    ++converted;
+                }
+                else if (type == te::LowPassPlugin::xmlTypeName)
+                {
+                    convertOldLowPass (v);
                     ++converted;
                 }
             }

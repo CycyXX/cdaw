@@ -11,6 +11,7 @@ namespace cdaw
         - click a section to jump there, Shift-click to loop it
         - drag a section to move it (with everything on every track), Alt-drag to copy it
         - drag a section's edge to resize it, double-click to rename, right-click for more
+        - a section with lyrics shows a mark; hovering shows them
 
         It spans the header column too; the time area starts at `headerWidth`. */
     class ArrangerLane : public juce::Component,
@@ -35,6 +36,11 @@ namespace cdaw
 
         /** Called whenever sections change (so the lanes can redraw section lines). */
         std::function<void()> onSectionsChanged;
+
+        /** "Lyrics..." in a section's menu. */
+        std::function<void (te::ArrangerClip&)> onEditLyrics;
+
+        juce::String getTooltip() override;
 
         static constexpr int height = 26;
 

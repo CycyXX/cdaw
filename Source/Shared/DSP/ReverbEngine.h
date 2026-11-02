@@ -38,6 +38,10 @@ namespace cdaw
         void prepare (double sampleRate, int maxBlockSize, const Settings&);
         void reset();
 
+        /** Takes the size and mix at once instead of gliding to them, so a reverb switched on
+            with a sound starts the same way whatever the host's block size. */
+        void jumpTo (const Settings&);
+
         /** Processes `n` samples from `start` in place (stereo, or mono in / mono out). */
         void process (juce::AudioBuffer<float>&, int start, int n, const Settings&);
 

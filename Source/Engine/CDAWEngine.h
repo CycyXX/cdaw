@@ -35,6 +35,10 @@ namespace cdaw
         void editHasBeenSaved (te::Edit&, juce::File) override;
         ControlSurfaces getDesiredControlSurfaces() override;
 
+        /** Asked when each recording starts; punching mutes by itself, inside the punch range. */
+        bool muteTrackContentsWhilstRecording() override                { return muteOldTakesWhilstRecording; }
+        static inline bool muteOldTakesWhilstRecording = true;
+
     private:
         AppSettings& settings;
     };

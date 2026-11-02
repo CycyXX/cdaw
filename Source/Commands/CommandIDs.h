@@ -4,7 +4,11 @@
 
 namespace cdaw
 {
-    /** Every user-invokable action. IDs start at 0x21000 to stay clear of JUCE's StandardApplicationCommandIDs (0x1001+). Handled by AppCommands through juce::ApplicationCommandManager. */
+    /** Every user-invokable action. IDs start at 0x21000 to stay clear of JUCE's StandardApplicationCommandIDs (0x1001+). Handled by AppCommands through juce::ApplicationCommandManager.
+        Key mappings are saved by number: add new IDs at the end of their group.
+        toggleRetroRecord, toggleBrowser and setupMultiOut are reserved for features not built yet
+        (MIDI retrospective record, the file / groove browser, multi-output instruments); they are
+        not registered, so they appear in no menu and no shortcut list. */
     namespace CommandIDs
     {
         enum : juce::CommandID
@@ -26,6 +30,10 @@ namespace cdaw
             showAudioSettings,
             revealProjectFolder,
             locateMissingFiles,
+            saveNewVersion,
+            saveAsTemplate,
+            importCubaseProject,
+            reconnectAudioDevice,
 
             // Edit
             undo = 0x22000,
@@ -95,6 +103,7 @@ namespace cdaw
             toggleAutomation,
             toggleArranger,
             toggleSpectrum,
+            toggleNotes,
 
             // Track
             addAudioTrack = 0x25000,
@@ -115,6 +124,8 @@ namespace cdaw
             moveTrackDown,
             setupMultiOut,
             addStereoAudioTrack,
+            toggleGroupEdit,
+            groupSelectedTracks,
 
             // Plugins
             scanPlugins = 0x26000,

@@ -49,7 +49,7 @@ namespace cdaw
         // Polls while recording until the input has really started (count-in, device start-up).
         juce::TimedCallback recordingPoll { [this] { updateRecordingClip(); } };
         std::unique_ptr<TakeLanes> takeLanes;
-        int lastNumTakes = 0;
+        int lastNumTakes = -1;      // -1: not looked yet (a project that opens with takes keeps its lanes as they were)
         bool lastSelected = false;
         juce::Range<int> lastRangeX;        // x span of the range selection as last painted
         void updateTakeLanes();

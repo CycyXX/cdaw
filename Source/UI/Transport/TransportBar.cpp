@@ -1,6 +1,7 @@
 #include "TransportBar.h"
 #include "../LookAndFeel/Palette.h"
 #include "../../Commands/CommandIDs.h"
+#include "../../Model/KeyScale.h"
 #include "MetronomePanel.h"
 
 namespace cdaw
@@ -246,6 +247,13 @@ namespace cdaw
         };
         addAndMakeVisible (sigLabel);
 
+        keyButton.setTooltip ("The song's key and scale: the piano roll shades the notes outside it and can snap to it");
+        keyButton.setColour (juce::TextButton::buttonColourId, Palette::laneBackground);
+        keyButton.setColour (juce::TextButton::textColourOffId, Palette::text);
+        keyButton.setWantsKeyboardFocus (false);
+        keyButton.onClick = [this] { KeyScale::createMenu (edit).showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&keyButton)); };
+        addAndMakeVisible (keyButton);
+
         writeAutoButton.setTooltip ("Write automation: tracks in Touch / Latch / Write mode record parameter moves while playing");
         writeAutoButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffffb84f).withAlpha (0.6f));
         writeAutoButton.onClick = [this]
@@ -385,6 +393,7 @@ namespace cdaw
         snapButton.setToggleState (viewState.snapEnabled.get(), juce::dontSendNotification);
         writeAutoButton.setToggleState (edit.getAutomationRecordManager().isWritingAutomation(), juce::dontSendNotification);
         gridBox.setSelectedId (viewState.gridIndex.get() + 1, juce::dontSendNotification);
+        keyButton.setButtonText (KeyScale::getKey (edit).getShortName());
 
         for (int i = 0; i < toolButtons.size(); ++i)
             toolButtons[i]->setToggleState (viewState.tool.get() == i, juce::dontSendNotification);
@@ -402,6 +411,7 @@ namespace cdaw
         g.setFont (juce::FontOptions (10.0f));
         g.drawText ("BPM", tempoField.getBounds().translated (0, -12).withHeight (12), juce::Justification::centred);
         g.drawText ("SIGNATURE", sigLabel.getBounds().translated (0, -12).withHeight (12), juce::Justification::centred);
+        g.drawText ("KEY", keyButton.getBounds().translated (0, -12).withHeight (12), juce::Justification::centred);
         g.drawText ("GRID", gridBox.getBounds().translated (0, -12).withHeight (12), juce::Justification::centred);
     }
 
@@ -434,9 +444,10 @@ namespace cdaw
         };
 
         withCaption (tempoField, 76);
-        withCaption (sigLabel, 66, 18);
+        withCaption (sigLabel, 66);
+        withCaption (keyButton, 84, 18);
         place (snapButton, 52);
-        withCaption (gridBox, 130, 18);
+        withCaption (gridBox, 120, 18);
 
         for (auto* b : toolButtons)
             place (*b, 32, 2);

@@ -128,7 +128,8 @@ namespace cdaw::TrackOps
         return track;
     }
 
-    te::AudioTrack::Ptr addInstrumentTrack (te::Edit& edit, te::SelectionManager* sm, const juce::PluginDescription* desc, te::Track* after)
+    te::AudioTrack::Ptr addInstrumentTrack (te::Edit& edit, te::SelectionManager* sm, const juce::PluginDescription* desc, te::Track* after,
+                                            bool arm)
     {
         auto colour = nextColour (edit);
         auto track = edit.insertNewAudioTrack (insertPointAfter (edit, after), sm);
@@ -158,7 +159,7 @@ namespace cdaw::TrackOps
             if (in->getInputDevice().getDeviceID() == "all_midi_in")
             {
                 assignInput (*track, in);
-                setArmed (*track, true);
+                setArmed (*track, arm);
                 break;
             }
         }

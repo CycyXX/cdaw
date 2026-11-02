@@ -1,11 +1,43 @@
 #include "ExportDialog.h"
 #include "../LookAndFeel/Palette.h"
+#include "../../Model/EditViewState.h"
 #include "../../Model/ProjectSession.h"
+#include "../../Model/TempoOps.h"
 #include "../../Model/TrackOps.h"
 
 namespace cdaw
 {
     using namespace ExportService;
+
+    namespace
+    {
+        enum RangeChoice { songRange = 1, loopRange, selectedRange, customRange };
+    }
+
+    ExportDialog::RangeFields::RangeFields()
+    {
+        for (auto* e : { &from, &to })
+        {
+            e->setJustification (juce::Justification::centred);
+            e->setTooltip ("Bar.beat.tick (\"5.1.000\", or just \"5\"), or a time (\"1:23.5\")");
+            addAndMakeVisible (e);
+        }
+        dash.setJustificationType (juce::Justification::centred);
+        info.setColour (juce::Label::textColourId, Palette::textDim);
+        info.setFont (juce::FontOptions (12.0f));
+        addAndMakeVisible (dash);
+        addAndMakeVisible (info);
+    }
+
+    void ExportDialog::RangeFields::resized()
+    {
+        auto r = getLocalBounds();
+        from.setBounds (r.removeFromLeft (90));
+        dash.setBounds (r.removeFromLeft (20));
+        to.setBounds (r.removeFromLeft (90));
+        r.removeFromLeft (8);
+        info.setBounds (r);
+    }
 
     ExportDialog::ExportDialog (ProjectSession& s, bool stems) : session (s)
     {
@@ -14,8 +46,20 @@ namespace cdaw
 
         whatBox.addItemList ({ "Mixdown (master)", "Stems: all tracks", "Stems: selected tracks" }, 1);
         whatBox.setSelectedId (stems ? 2 : 1);
-        rangeBox.addItemList ({ "Whole song", "Loop range" }, 1);
-        rangeBox.setSelectedId (session.getTransport().looping.get() ? 2 : 1);
+
+        // The range: the selection if there is one, else the loop when looping, else the song.
+        auto& transport = session.getTransport();
+        const bool hasLoop = ! transport.getLoopRange().isEmpty(), hasSelection = session.getViewState().hasRange();
+        rangeBox.addItem ("Whole song", songRange);
+        rangeBox.addItem ("Loop range", loopRange);
+        rangeBox.addItem ("Selected range", selectedRange);
+        rangeBox.addItem ("Custom (type it in)", customRange);
+        rangeBox.setItemEnabled (loopRange, hasLoop);
+        rangeBox.setItemEnabled (selectedRange, hasSelection);
+        rangeBox.setSelectedId (hasSelection ? selectedRange : (hasLoop && transport.looping.get() ? loopRange : songRange), juce::dontSendNotification);
+        rangeBox.onChange = [this] { rangeChosen(); };
+        rangeFields.from.onTextChange = rangeFields.to.onTextChange = [this] { rangeTyped(); };
+        rangeChosen();
 
         formatBox.addItem ("WAV", 1);
         formatBox.addItem ("FLAC", 2);
@@ -70,7 +114,7 @@ namespace cdaw
             box->onChange = onChange;
 
         const std::pair<const char*, juce::Component*> layout[] = {
-            { "Export", &whatBox }, { "Range", &rangeBox }, { "Format", &formatBox }, { "Bit depth", &depthBox },
+            { "Export", &whatBox }, { "Range", &rangeBox }, { "From / to", &rangeFields }, { "Format", &formatBox }, { "Bit depth", &depthBox },
             { "Quality", &qualityBox }, { "Sample rate", &rateBox }, { "Tail", &tailSlider },
             { "Normalise", &normaliseBox }, { "Level", &levelSlider }, { "", &ditherToggle },
             { "File name", &nameEditor }, { "Folder", &folderButton }
@@ -98,7 +142,62 @@ namespace cdaw
         addChildComponent (progressBar);
 
         updateEnablement();
-        setSize (560, 520);
+        setSize (560, 552);
+    }
+
+    std::optional<te::TimeRange> ExportDialog::chosenRange() const
+    {
+        auto& edit = session.getEdit();
+        switch (rangeBox.getSelectedId())
+        {
+            case loopRange:     return session.getTransport().getLoopRange();
+            case selectedRange: return session.getViewState().getRange();
+            case customRange:
+            {
+                const auto a = TempoOps::parsePosition (edit, rangeFields.from.getText());
+                const auto b = TempoOps::parsePosition (edit, rangeFields.to.getText());
+                if (! a || ! b)
+                    return std::nullopt;
+                return te::TimeRange (juce::jmin (*a, *b), juce::jmax (*a, *b));
+            }
+            case songRange:
+            default:            return te::TimeRange (te::TimePosition(), te::TimePosition() + edit.getLength());
+        }
+    }
+
+    void ExportDialog::rangeChosen()
+    {
+        if (rangeBox.getSelectedId() != customRange)
+            if (auto r = chosenRange())
+            {
+                auto& edit = session.getEdit();
+                rangeFields.from.setText (TempoOps::formatBarsBeats (edit, r->getStart()), false);
+                rangeFields.to.setText (TempoOps::formatBarsBeats (edit, r->getEnd()), false);
+            }
+        showRange();
+    }
+
+    void ExportDialog::rangeTyped()
+    {
+        rangeBox.setSelectedId (customRange, juce::dontSendNotification);
+        showRange();
+    }
+
+    void ExportDialog::showRange()
+    {
+        const auto r = chosenRange();
+        if (! r)
+        {
+            rangeFields.info.setColour (juce::Label::textColourId, Palette::meterRed);
+            rangeFields.info.setText ("Type bar.beat (5.1) or a time (1:23.5)", juce::dontSendNotification);
+            return;
+        }
+
+        rangeFields.info.setColour (juce::Label::textColourId, Palette::textDim);
+        rangeFields.info.setText (r->isEmpty() ? juce::String ("empty")
+                                               : TempoOps::formatTime (r->getStart()) + " - " + TempoOps::formatTime (r->getEnd())
+                                                     + "  (" + juce::String (r->getLength().inSeconds(), 1) + " s)",
+                                  juce::dontSendNotification);
     }
 
     ExportDialog::~ExportDialog()
@@ -153,7 +252,8 @@ namespace cdaw
         o.format = (Format) (formatBox.getSelectedId() - 1);
         o.bitDepth = depthBox.getSelectedId();
         o.sampleRate = (double) rateBox.getSelectedId();
-        o.range = rangeBox.getSelectedId() == 2 ? Range::loop : Range::song;
+        o.range = Range::custom;
+        o.customRange = chosenRange().value_or (te::TimeRange());
         o.tailSeconds = tailSlider.getValue();
         o.normalise = normaliseBox.getSelectedId() == 2 ? Normalise::peak : normaliseBox.getSelectedId() == 3 ? Normalise::lufs : Normalise::none;
         o.normaliseLevel = (float) levelSlider.getValue();
@@ -190,7 +290,8 @@ namespace cdaw
 
         if (getRenderRange (edit, options).isEmpty())
         {
-            statusLabel.setText ("Nothing to export: the project is empty (or the loop range is empty).", juce::dontSendNotification);
+            statusLabel.setText (chosenRange() ? "Nothing to export: the range is empty (or the project is)." : "Can't read the range: type bar.beat (5.1) or a time (1:23.5).",
+                                 juce::dontSendNotification);
             return;
         }
 

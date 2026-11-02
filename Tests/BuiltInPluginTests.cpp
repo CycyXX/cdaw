@@ -8,6 +8,7 @@
 #include "Plugins/ReverbPlugin.h"
 #include "Plugins/SimpleReverbPlugin.h"
 #include "Shared/CVerb/CVerbView.h"
+#include "Shared/Compressor/CompressorView.h"
 #include "Shared/Multiband/MultibandView.h"
 #include "UI/LookAndFeel/CDAWLookAndFeel.h"
 #include "UI/Plugins/CompressorEditor.h"
@@ -125,6 +126,15 @@ namespace cdaw::test
             return preset.getChildFile ("VST3/CVerb/CVerb_artefacts").getChildFile (config.getFileName()).getChildFile ("VST3/C-Verb.vst3");
         }
 
+        /** The C-Comp VST3 from this build tree, if it has been built. */
+        static juce::File findCCompVst3()
+        {
+            auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+            auto config = exe.getParentDirectory();
+            auto preset = config.getParentDirectory().getParentDirectory().getParentDirectory();
+            return preset.getChildFile ("VST3/CComp/CComp_artefacts").getChildFile (config.getFileName()).getChildFile ("VST3/C-Comp.vst3");
+        }
+
         /** The C-Multicomp VST3 from this build tree, if it has been built. */
         static juce::File findCMulticompVst3()
         {
@@ -225,10 +235,10 @@ namespace cdaw::test
                 logMessage ("Gain change: " + juce::String (change, 2) + " dB (expected about -9)");
                 expectWithinAbsoluteError (change, -9.0f, 1.0f);
 
-                auto gr = comp->gainReduction.take();
+                auto gr = comp->engine.gainReduction.take();
                 logMessage ("Metered gain reduction: " + juce::String (gr, 2) + " dB");
                 expectWithinAbsoluteError (gr, 9.0f, 1.0f);
-                expectGreaterThan (comp->inputPeak[0].take(), 0.2f);
+                expectGreaterThan (comp->engine.inputPeak[0].take(), 0.2f);
             }
 
             beginTest ("CDAW compressor keeps the sidechain");
@@ -573,6 +583,185 @@ namespace cdaw::test
 
                             logMessage ("Decay shown by the host: " + decayParam->getCurrentValueAsText());
                         }
+                    }
+                }
+            }
+
+            beginTest ("The C-Comp VST3 sounds the same as the built-in C-Comp");
+            {
+                auto bundle = findCCompVst3();
+                juce::OwnedArray<juce::PluginDescription> types;
+
+                if (bundle.exists())
+                    for (auto* format : engine.getPluginManager().pluginFormatManager.getFormats())
+                        if (format->getName() == "VST3")
+                            format->findAllTypesForFile (types, bundle.getFullPathName());
+
+                if (types.isEmpty())
+                {
+                    logMessage ("C-Comp VST3 not built (" + bundle.getFullPathName() + "), skipping");
+                }
+                else
+                {
+                    expectEquals (types[0]->name, juce::String ("C-Comp"));
+                    engine.getPluginManager().knownPluginList.addType (*types[0]);
+
+                    // The same settings on both: 4:1 over -24 dB with a soft knee, fast attack, some make-up.
+                    using namespace CompressorParameters;
+                    auto tone = writeSineFile ("ccomp_vst3_in", 2.0, 0.25f, 1000.0);
+                    const std::vector<std::pair<ID, float>> settings {
+                        { threshold, -24.0f }, { ratio, 4.0f }, { knee, 6.0f }, { attack, 1.0f }, { release, 100.0f }, { makeUp, 3.0f } };
+
+                    auto render = [&] (bool useVst3)
+                    {
+                        auto edit = te::test_utilities::createTestEdit (engine, 1);
+                        auto track = te::getAudioTracks (*edit)[0];
+                        track->insertWaveClip ("in", tone, { secs (0.0, 2.0), {} }, false);
+
+                        if (useVst3)
+                        {
+                            auto plugin = edit->getPluginCache().createNewPlugin (te::ExternalPlugin::xmlTypeName, *types[0]);
+                            track->pluginList.insertPlugin (plugin, 0, nullptr);
+                            auto* instance = dynamic_cast<te::ExternalPlugin*> (plugin.get())->getAudioPluginInstance();
+                            expect (instance != nullptr, "VST3 instance loads");
+
+                            if (instance != nullptr)
+                                for (auto [id, value] : settings)
+                                    for (auto* param : instance->getParameters())
+                                        if (param->getName (64) == get (id).name)
+                                            param->setValueNotifyingHost (get (id).getRange().convertTo0to1 (value));
+                        }
+                        else
+                        {
+                            auto comp = insert<CompressorPlugin> (*track);
+                            comp->thresholdGain.setParameter (juce::Decibels::decibelsToGain (-24.0f), juce::sendNotification);
+                            comp->ratio.setParameter (0.25f, juce::sendNotification);
+                            comp->knee.setParameter (6.0f, juce::sendNotification);
+                            comp->attackMs.setParameter (1.0f, juce::sendNotification);
+                            comp->releaseMs.setParameter (100.0f, juce::sendNotification);
+                            comp->outputDb.setParameter (3.0f, juce::sendNotification);
+                        }
+
+                        return te::test_utilities::renderToAudioBuffer (*edit);
+                    };
+
+                    auto vst3 = render (true), builtIn = render (false);
+                    const auto start = (int) (0.1 * builtIn.sampleRate);
+                    const auto length = juce::jmin (vst3.buffer.getNumSamples(), builtIn.buffer.getNumSamples()) - start;
+                    expectGreaterThan (length, (int) builtIn.sampleRate, "both renders have audio");
+
+                    double signal = 0.0, difference = 0.0;
+                    for (int ch = 0; ch < 2; ++ch)
+                        for (int i = start; i < start + length; ++i)
+                        {
+                            auto a = builtIn.buffer.getSample (ch, i), b = vst3.buffer.getSample (ch, i);
+                            signal += a * a;
+                            difference += (a - b) * (a - b);
+                        }
+
+                    auto db = 10.0 * std::log10 (juce::jmax (1.0e-30, difference) / juce::jmax (1.0e-30, signal));
+                    logMessage ("VST3 vs built-in C-Comp, difference below the signal: " + juce::String (db, 1) + " dB");
+                    expectLessThan (db, -80.0, "the same audio with the same settings");
+
+                    // What a host does besides playing: open the editor, save and restore the settings.
+                    juce::String error;
+                    auto& formats = engine.getPluginManager().pluginFormatManager;
+                    auto first = formats.createPluginInstance (*types[0], 48000.0, 512, error);
+                    auto second = formats.createPluginInstance (*types[0], 48000.0, 512, error);
+                    expect (first != nullptr && second != nullptr, "instances: " + error);
+
+                    if (first != nullptr && second != nullptr)
+                    {
+                        if (auto* editor = first->createEditorIfNeeded())
+                        {
+                            logMessage ("VST3 editor opens at " + juce::String (editor->getWidth()) + " x " + juce::String (editor->getHeight()));
+                            expectEquals (editor->getWidth(), CompressorView::defaultWidth);
+                            delete editor;
+                        }
+                        else
+                        {
+                            expect (false, "the VST3 has an editor");
+                        }
+
+                        // Every parameter, the sidechain switch, and the Bypass switch VST3 hosts get from every plugin.
+                        expectEquals (first->getParameters().size(), (int) count + 2, "every C-Comp parameter is automatable in the host");
+                        expectEquals (first->getBusCount (true), 2, "a main input and a sidechain input");
+
+                        auto& ratioSpec = get (ratio);
+                        juce::AudioProcessorParameter* ratioParam = nullptr;
+                        for (auto* param : first->getParameters())
+                            if (param->getName (64) == ratioSpec.name)
+                                ratioParam = param;
+
+                        expect (ratioParam != nullptr, "Ratio is a host parameter");
+
+                        if (ratioParam != nullptr)
+                        {
+                            ratioParam->setValueNotifyingHost (ratioSpec.getRange().convertTo0to1 (8.0f));
+                            juce::MemoryBlock saved;
+                            first->getStateInformation (saved);
+                            second->setStateInformation (saved.getData(), (int) saved.getSize());
+
+                            for (auto* param : second->getParameters())
+                                if (param->getName (64) == ratioSpec.name)
+                                    expectWithinAbsoluteError (ratioSpec.getRange().convertFrom0to1 (param->getValue()), 8.0f, 0.01f, "settings restore");
+
+                            logMessage ("Ratio shown by the host: " + ratioParam->getCurrentValueAsText());
+                        }
+
+                        // The host's sidechain input keys the detector: a loud key pulls a quiet signal down.
+                        juce::AudioProcessor::BusesLayout withKey;
+                        withKey.inputBuses = { juce::AudioChannelSet::stereo(), juce::AudioChannelSet::stereo() };
+                        withKey.outputBuses = { juce::AudioChannelSet::stereo() };
+                        expect (second->setBusesLayout (withKey), "the sidechain input can be enabled");
+                        second->prepareToPlay (48000.0, 512);
+
+                        auto setKeyed = [&] (bool on)
+                        {
+                            for (auto* param : second->getParameters())
+                                if (param->getName (64) == "Sidechain")
+                                    param->setValueNotifyingHost (on ? 1.0f : 0.0f);
+                        };
+
+                        for (auto* param : second->getParameters())
+                            for (auto [id, value] : settings)
+                                if (param->getName (64) == get (id).name)
+                                    param->setValueNotifyingHost (get (id).getRange().convertTo0to1 (id == ratio ? 20.0f : value));
+
+                        auto level = [&] (float keyLevel)
+                        {
+                            juce::AudioBuffer<float> buffer (4, 512);
+                            juce::MidiBuffer midi;
+                            float peak = 0.0f;
+
+                            for (int block = 0; block < 40; ++block)
+                            {
+                                for (int i = 0; i < 512; ++i)
+                                {
+                                    auto sine = std::sin (juce::MathConstants<float>::twoPi * 200.0f * (float) (block * 512 + i) / 48000.0f);
+                                    buffer.setSample (0, i, 0.05f * sine);
+                                    buffer.setSample (1, i, 0.05f * sine);
+                                    buffer.setSample (2, i, keyLevel * sine);
+                                    buffer.setSample (3, i, keyLevel * sine);
+                                }
+
+                                second->processBlock (buffer, midi);
+                                if (block >= 30)
+                                    peak = juce::jmax (peak, buffer.getMagnitude (0, 0, 512));
+                            }
+
+                            return peak;
+                        };
+
+                        setKeyed (false);
+                        auto unkeyed = level (0.8f);
+                        setKeyed (true);
+                        auto quiet = level (0.0f), keyed = level (0.8f);
+                        logMessage ("Signal peak with the sidechain off: " + juce::String (unkeyed, 3) + ", keyed by silence: "
+                                    + juce::String (quiet, 3) + ", keyed by a loud signal: " + juce::String (keyed, 3));
+                        expectGreaterThan (unkeyed, 0.05f * 0.7f, "with the sidechain off the key is ignored");
+                        expectGreaterThan (quiet, 0.05f * 0.7f, "a silent key leaves the signal alone");
+                        expectLessThan (keyed, quiet * 0.5f, "a loud key compresses the signal");
                     }
                 }
             }

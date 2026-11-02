@@ -36,8 +36,27 @@ namespace cdaw
         /** Writes the edit (with its audio and plugin states embedded) to `destination`. */
         juce::Result exportTo (te::Edit&, const juce::File& destination, Report&);
 
+        struct ImportOptions
+        {
+            /** Copy audio files the project refers to outside itself into the media folder too
+                (otherwise they're used where they are). */
+            bool copyExternalMedia = false;
+
+            /** Called as the import goes along (on the message thread): progress 0..1 and what's
+                happening now. */
+            std::function<void (double progress, const juce::String& message)> progress;
+        };
+
         /** Replaces the contents of `edit` with the project in `source`. Audio files are
             extracted into `mediaFolder` (e.g. the project's Audio/Imported folder). */
-        juce::Result importInto (te::Edit&, const juce::File& source, const juce::File& mediaFolder, Report&);
+        juce::Result importInto (te::Edit&, const juce::File& source, const juce::File& mediaFolder, Report&,
+                                 const ImportOptions& = {});
+
+        /** A VST3 preset file (.vstpreset) holding a plugin's component and controller state. */
+        juce::MemoryBlock makeVst3Preset (const juce::String& classId, const juce::MemoryBlock& component, const juce::MemoryBlock& controller);
+
+        /** importInto() for an already opened zip; `source` is where relative external paths start from. */
+        juce::Result importFromZip (te::Edit&, juce::ZipFile&, const juce::File& source, const juce::File& mediaFolder,
+                                    Report&, const ImportOptions& = {});
     }
 }

@@ -14,16 +14,18 @@ namespace cdaw
             juce::File expected;                    // where the project looks for it
             juce::StringArray clipNames;
             juce::ReferenceCountedArray<te::Clip> clips;
+            juce::Array<juce::ValueTree> takes;     // takes held by clips that may be playing another one
+            te::Edit* edit = nullptr;
         };
 
-        /** Audio clips whose source file doesn't exist, grouped by file. */
+        /** Audio clips whose source file, or one of whose takes, doesn't exist, grouped by file. */
         juce::Array<MissingFile> findMissingAudio (te::Edit&);
 
         /** A file called `fileName` in `folder` or below (case-insensitive); {} if there is none. */
         juce::File findByName (const juce::File& folder, const juce::String& fileName);
 
-        /** Points every clip of `missing` at `file`. The path is stored relative to the project
-            where possible. Returns the number of clips reconnected. */
+        /** Points every clip and take of `missing` at `file`. The path is stored relative to the project
+            where possible. Returns the number of clips and takes reconnected. */
         int relink (const MissingFile& missing, const juce::File& file);
 
         /** Looks for each missing file by name in the folders, in the order given (the first folder

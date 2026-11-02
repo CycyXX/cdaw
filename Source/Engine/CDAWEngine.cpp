@@ -238,7 +238,8 @@ namespace cdaw
             if (in->getBitDepth() != depth && in->getAvailableBitDepths().contains (depth))
                 in->setBitDepth (depth);
 
-            // Keep "don't record" if the user chose it; otherwise always replace.
+            // Keep "don't record" if the user chose it; otherwise replace (which mutes the old take
+            // inside a punch range). ProjectSession makes the recording land as a take instead.
             if (in->getMergeMode() == overlayMode)
                 in->setMergeMode (replaceMode);
 
@@ -246,8 +247,8 @@ namespace cdaw
                 in->setRecordAdjustmentMs (offsetMs);
         }
 
-        // MIDI: 0 = overdub into the existing clip, 1 = replace, 2 = new clips.
-        auto midiMode = settings.getInt (SettingKeys::midiRecordMode, 0);
+        // MIDI: 0 = overdub into the existing clip, 1 = replace, 2 = new take.
+        auto midiMode = settings.getInt (SettingKeys::midiRecordMode, 2);
 
         for (auto& in : dm.getMidiInDevices())
         {

@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "KnobParameter.h"
+#include <optional>
 
 namespace cdaw
 {
@@ -26,6 +27,10 @@ namespace cdaw
         void setColour (juce::Colour);
         void setLabel (const juce::String&);
 
+        /** Shows modulation on an outer ring (in the parameter's units): the range it can be
+            moved over, and where it is right now. Nothing given hides that part. */
+        void setModulation (std::optional<juce::Range<float>> range, std::optional<float> now);
+
         void resized() override;
         void paint (juce::Graphics&) override;
 
@@ -40,5 +45,7 @@ namespace cdaw
         std::unique_ptr<Dial> dial;
         juce::String shownValue;
         bool inverted = false;
+        std::optional<juce::Range<float>> modulationRange;
+        std::optional<float> modulatedNow;
     };
 }

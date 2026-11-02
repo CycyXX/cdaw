@@ -1,10 +1,12 @@
 #pragma once
 
 #include "ArrangeHost.h"
+#include "../../Model/CompOps.h"
 
 namespace cdaw
 {
-    /** Take rows shown under a track's clips. Swipe across a row to comp that take in. */
+    /** Take rows shown under a track's clips, audio or MIDI. Swipe across a row to comp that take in,
+        click it to use that take for the piece under the mouse (on the whole group, with group editing on). */
     class TakeLanes : public juce::Component
     {
     public:
@@ -22,6 +24,7 @@ namespace cdaw
 
     private:
         te::SmartThumbnail& getThumbnail (const juce::File&);
+        void drawNotes (juce::Graphics&, const CompOps::TakeInfo&, juce::Rectangle<int> area, te::TimeRange shown);
         int rowAt (int y) const              { return y / rowHeight; }
 
         ArrangeHost& host;

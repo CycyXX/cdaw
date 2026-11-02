@@ -1,6 +1,8 @@
 #include "ProjectSession.h"
 #include "../Plugins/BuiltInPlugins.h"
+#include "CompOps.h"
 #include "MissingMedia.h"
+#include "ProjectVersions.h"
 
 namespace cdaw
 {
@@ -96,6 +98,7 @@ namespace cdaw
             viewState = std::make_unique<EditViewState> (*edit, selectionManager);
             analyser = std::make_unique<MasterAnalyser> (*edit);
             viewState->analyser = analyser.get();
+            edit->getTransport().addListener (this);
             startTimer (60 * 1000);   // autosave
 
             if (recovering)
@@ -125,11 +128,34 @@ namespace cdaw
 
         if (edit != nullptr)
         {
+            edit->getTransport().removeListener (this);
             edit->getTransport().stop (false, true);
             selectionManager.deselectAll();
         }
 
         edit.reset();
+    }
+
+    void ProjectSession::recordingAboutToStop (te::InputDeviceInstance& in, te::EditItemID)
+    {
+        if (auto* wave = dynamic_cast<te::WaveInputDevice*> (&in.getInputDevice()))
+            if (wave->getMergeMode() == te::WaveInputDevice::getMergeModes()[1])
+                wave->setMergeMode (te::WaveInputDevice::getMergeModes()[0]);
+    }
+
+    void ProjectSession::recordingFinished (te::InputDeviceInstance& in, te::EditItemID, const te::Clip::Array& clips)
+    {
+        if (auto* wave = dynamic_cast<te::WaveInputDevice*> (&in.getInputDevice()))
+            if (wave->getMergeMode() == te::WaveInputDevice::getMergeModes()[0])
+                wave->setMergeMode (te::WaveInputDevice::getMergeModes()[1]);
+
+        // MIDI in overdub or replace mode has dealt with what was there.
+        if (auto* midi = dynamic_cast<te::MidiInputDevice*> (&in.getInputDevice()))
+            if (midi->mergeRecordings || midi->replaceExistingClips)
+                return;
+
+        for (auto c : clips)
+            CompOps::absorbRecording (*c);
     }
 
     bool ProjectSession::stopRecordingKeepingTakes()
@@ -229,6 +255,29 @@ namespace cdaw
         return save();
     }
 
+    juce::File ProjectSession::saveNewVersion (const juce::String& note)
+    {
+        if (edit == nullptr)
+            return {};
+
+        // Same folder, so the relative audio paths stay as they are.
+        auto previousFile = editFile;
+        auto previousNote = ProjectVersions::getNote (*edit);
+        auto target = ProjectVersions::getNextVersionFile (editFile);
+
+        // Unsaved changes go into the new version, so the old one has nothing to recover.
+        discardAutosave();
+        editFile = target;
+        ProjectVersions::setNote (*edit, note);
+
+        if (save())
+            return target;
+
+        editFile = previousFile;
+        ProjectVersions::setNote (*edit, previousNote);
+        return {};
+    }
+
     void ProjectSession::autosave()
     {
         if (edit == nullptr || edit->getTransport().isRecording())
@@ -247,7 +296,8 @@ namespace cdaw
         auto name = getName() + "_" + juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S");
         editFile.copyFileTo (folder.getNonexistentChildFile (name, projectFileSuffix, false));
 
-        auto backups = folder.findChildFiles (juce::File::findFiles, false, "*" + juce::String (projectFileSuffix));
+        // Only this version's backups (Song_20261028-..., not Song_02_20261028-...): each keeps its own ten.
+        auto backups = folder.findChildFiles (juce::File::findFiles, false, getName() + "_????????-??????*" + juce::String (projectFileSuffix));
         std::sort (backups.begin(), backups.end(), [] (const juce::File& a, const juce::File& b)
                    { return a.getLastModificationTime() > b.getLastModificationTime(); });
 

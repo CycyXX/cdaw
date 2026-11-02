@@ -3,6 +3,7 @@
 #include "../../App/AppSettings.h"
 #include "../../Model/TrackOps.h"
 #include "../../Plugins/BuiltInPlugins.h"
+#include "../../Plugins/DelayPlugin.h"
 #include "../../Plugins/ReverbPlugin.h"
 #include "../../Plugins/SimpleReverbPlugin.h"
 
@@ -20,15 +21,17 @@ namespace cdaw::PluginMenus
         using PM = te::PluginManager;
         return {
             BuiltInPlugins::getEqDescription(),
+            BuiltInPlugins::getFilterDescription(),
             BuiltInPlugins::getCompressorDescription(),
             BuiltInPlugins::getMultibandDescription(),
+            BuiltInPlugins::getEsserDescription(),
+            BuiltInPlugins::getDistDescription(),
             BuiltInPlugins::getSimpleReverbDescription(),
             BuiltInPlugins::getReverbDescription(),
-            PM::createBuiltInPluginDescription<te::DelayPlugin>(),
-            PM::createBuiltInPluginDescription<te::ChorusPlugin>(),
-            PM::createBuiltInPluginDescription<te::PhaserPlugin>(),
+            BuiltInPlugins::getDelayDescription(),
+            BuiltInPlugins::getChorusDescription(),
+            BuiltInPlugins::getPhaserDescription(),
             PM::createBuiltInPluginDescription<te::PitchShiftPlugin>(),
-            PM::createBuiltInPluginDescription<te::LowPassPlugin>(),
             PM::createBuiltInPluginDescription<te::ImpulseResponsePlugin>(),
             PM::createBuiltInPluginDescription<te::AuxSendPlugin>(),
             PM::createBuiltInPluginDescription<te::ToneGeneratorPlugin>(),
@@ -39,6 +42,8 @@ namespace cdaw::PluginMenus
     {
         using PM = te::PluginManager;
         return {
+            BuiltInPlugins::getSynthDescription(),
+            BuiltInPlugins::getLeadDescription(),
             PM::createBuiltInPluginDescription<te::FourOscPlugin> (true),
             PM::createBuiltInPluginDescription<te::SamplerPlugin> (true),
         };
@@ -139,13 +144,15 @@ namespace cdaw::PluginMenus
                 auto idx = index < 0 ? getPreFaderInsertIndex (*listPtr) : index;
                 listPtr->insertPlugin (p, idx, nullptr);
 
-                // On an FX return the reverb is all you want to hear: fully wet.
+                // On an FX return the reverb or delay is all you want to hear: fully wet.
                 if (owner != nullptr && TrackOps::getKind (*owner) == TrackKind::fx)
                 {
                     if (auto reverb = dynamic_cast<ReverbPlugin*> (p.get()))
                         reverb->mix.setParameter (1.0f, juce::sendNotification);
                     else if (auto simple = dynamic_cast<SimpleReverbPlugin*> (p.get()))
                         simple->mix.setParameter (1.0f, juce::sendNotification);
+                    else if (auto delay = dynamic_cast<DelayPlugin*> (p.get()))
+                        delay->parameter (DelayParameters::mix).setParameter (1.0f, juce::sendNotification);
                 }
 
                 // Open the new plugin's window straight away (sends are set up in the mixer instead).

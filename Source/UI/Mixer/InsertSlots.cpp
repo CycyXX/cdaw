@@ -9,7 +9,7 @@ namespace cdaw
     //==============================================================================
     struct InsertSlots::Row : public juce::Component
     {
-        Row (te::Plugin::Ptr p, bool c) : plugin (p), compact (c)
+        Row (te::Plugin::Ptr p, bool c, InsertSlots& o) : plugin (p), compact (c), owner (o)
         {
             power.setClickingTogglesState (false);
             power.setToggleState (plugin->isEnabled(), juce::dontSendNotification);
@@ -24,8 +24,8 @@ namespace cdaw
             addAndMakeVisible (power);
 
             name.setButtonText (plugin->getName() + (plugin->isMissing() ? " (missing)" : ""));
-            name.setTooltip (plugin->getName() + " - click to open, right-click for options");
-            name.onClick = [this] { showWindow(); };
+            name.setTooltip (plugin->getName() + " - click to open, drag to reorder, right-click for options");
+            name.onClick = [this] { if (! dragged) showWindow(); };     // a drag that ends on the name isn't a click
             name.setColour (juce::TextButton::textColourOffId, plugin->isEnabled() ? Palette::text : Palette::textDisabled);
             name.addMouseListener (this, false);
             addAndMakeVisible (name);
@@ -54,8 +54,26 @@ namespace cdaw
             plugin->showWindowExplicitly();
         }
 
+        // Dragging the name reorders the inserts (an instrument stays first).
+        void mouseDrag (const juce::MouseEvent& e) override
+        {
+            if (e.mods.isPopupMenu() || plugin->isSynth() || (! dragged && e.getDistanceFromDragStart() < 5))
+                return;
+
+            dragged = true;
+            owner.dragRow (*this, e.getEventRelativeTo (&owner).position.y);
+        }
+
+        void mouseUp (const juce::MouseEvent&) override
+        {
+            if (dragged)
+                owner.dropRow (*this);
+            dragged = false;
+        }
+
         void mouseDown (const juce::MouseEvent& e) override
         {
+            dragged = false;
             if (! e.mods.isPopupMenu())
                 return;
 
@@ -80,20 +98,15 @@ namespace cdaw
                         inserts.add (other);
 
                 auto idx = inserts.indexOf (p.get());
-                te::Track::Ptr keepTrack = track;
-
-                auto moveTo = [p, owningList, keepTrack] (te::Plugin* neighbour, bool after)
+                auto moveTo = [p, owningList] (int slot)
                 {
-                    if (neighbour == nullptr) return;
                     p->edit.getUndoManager().beginNewTransaction ("Move plugin");
-                    auto keep = p;
-                    p->removeFromParent();
-                    auto target = owningList->indexOf (neighbour) + (after ? 1 : 0);
-                    owningList->insertPlugin (keep, target, nullptr);
+                    MixerOps::moveInsert (*owningList, *p, slot);
                 };
 
-                m.addItem ("Move Up", idx > 0, false, [moveTo, inserts, idx] { moveTo (inserts[idx - 1], false); });
-                m.addItem ("Move Down", idx < inserts.size() - 1, false, [moveTo, inserts, idx] { moveTo (inserts[idx + 1], true); });
+                const bool pinned = p->isSynth() || (idx == 1 && inserts.getFirst()->isSynth());
+                m.addItem ("Move Up", idx > 0 && ! pinned, false, [moveTo, idx] { moveTo (idx - 1); });
+                m.addItem ("Move Down", idx < inserts.size() - 1 && ! p->isSynth(), false, [moveTo, idx] { moveTo (idx + 2); });
             }
 
             if (MixerOps::canSidechain (*p))
@@ -189,6 +202,8 @@ namespace cdaw
 
         te::Plugin::Ptr plugin;
         bool compact;
+        InsertSlots& owner;
+        bool dragged = false;
         juce::TextButton power, name, remove;
         juce::Rectangle<int> latencyArea;
         double latencyMs = 0.0;
@@ -222,8 +237,10 @@ namespace cdaw
 
         for (auto p : list.getPlugins())
             if (MixerOps::isInsertPlugin (*p))
-                addAndMakeVisible (rows.add (new Row (p, compact)));
+                addAndMakeVisible (rows.add (new Row (p, compact, *this)));
 
+        dragging = nullptr;
+        dropSlot = -1;
         resized();
 
         if (onIdealHeightChanged)
@@ -274,6 +291,56 @@ namespace cdaw
     }
 
     void InsertSlots::paint (juce::Graphics&) {}
+
+    void InsertSlots::dragRow (Row& row, float y)
+    {
+        if (dragging != &row)
+        {
+            dragging = &row;
+            row.setAlpha (0.5f);
+            setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+        }
+
+        // The gap nearest the pointer, between rows (not after an instrument's place at the top).
+        const int first = ! rows.isEmpty() && rows.getFirst()->plugin->isSynth() ? 1 : 0;
+        const int slot = juce::jlimit (first, rows.size(), juce::roundToInt (y / (float) rowPitch));
+        if (slot != dropSlot)
+        {
+            dropSlot = slot;
+            repaint();
+        }
+    }
+
+    void InsertSlots::dropRow (Row& row)
+    {
+        const int slot = dropSlot;
+        row.setAlpha (1.0f);
+        dragging = nullptr;
+        dropSlot = -1;
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+        repaint();
+
+        if (slot >= 0)
+        {
+            row.plugin->edit.getUndoManager().beginNewTransaction ("Move plugin");
+            MixerOps::moveInsert (list, *row.plugin, slot);     // the list's listener rebuilds the rows
+        }
+    }
+
+    void InsertSlots::paintOverChildren (juce::Graphics& g)
+    {
+        if (dragging == nullptr || dropSlot < 0)
+            return;
+
+        // Where the plugin will go: a line in the gap (none when it would stay where it is).
+        const int index = rows.indexOf (dragging);
+        if (dropSlot == index || dropSlot == index + 1)
+            return;
+
+        const float y = (float) (dropSlot * rowPitch) - 1.0f;
+        g.setColour (Palette::accent);
+        g.fillRoundedRectangle (juce::Rectangle<float> (2.0f, y - 1.5f, (float) getWidth() - 4.0f, 3.0f), 1.5f);
+    }
 
     //==============================================================================
     struct SendSlots::Row : public juce::Component

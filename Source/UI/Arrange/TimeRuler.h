@@ -26,9 +26,11 @@ namespace cdaw
 
     /** Ruler with three zones:
         top    - markers and tempo / time-signature changes (click a marker to jump, right-click to edit)
-        middle - drag to set the loop range, double-click toggles looping
+        middle - drag to set the loop range, drag its edges to change them, drag inside it to
+                 move it; double-click toggles looping
         bottom - bars and beats; click / drag to move the playhead */
     class TimeRuler : public juce::Component,
+                      public juce::TooltipClient,
                       private juce::ValueTree::Listener
     {
     public:
@@ -39,7 +41,13 @@ namespace cdaw
         void mouseDown (const juce::MouseEvent&) override;
         void mouseDrag (const juce::MouseEvent&) override;
         void mouseUp (const juce::MouseEvent&) override;
+        void mouseMove (const juce::MouseEvent&) override;
         void mouseDoubleClick (const juce::MouseEvent&) override;
+        juce::String getTooltip() override;
+
+        /** What a press in the loop strip at `x` would do. */
+        enum class LoopDrag { none, create, start, end, move };
+        LoopDrag loopDragAt (int x) const;
 
         static constexpr int markerZoneHeight = 15;
         static constexpr int loopZoneHeight = 13;
@@ -73,7 +81,9 @@ namespace cdaw
 
         EditViewState& viewState;
         te::Edit& edit;
-        bool draggingLoop = false, draggingPlayhead = false;
+        bool draggingPlayhead = false;
+        LoopDrag loopDrag = LoopDrag::none;
         te::TimePosition loopDragStart;
+        te::TimeRange loopAtDragStart;
     };
 }

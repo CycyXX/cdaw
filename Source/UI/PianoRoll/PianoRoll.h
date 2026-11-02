@@ -3,11 +3,14 @@
 #include "../../PCH.h"
 #include "../../Model/EditViewState.h"
 #include "../../Model/DrumMapLibrary.h"
+#include "../../Model/KeyScale.h"
 
 namespace cdaw
 {
     /** Piano roll / drum editor for one MIDI clip. Has its own zoom; snaps to the
-        arrangement's grid setting. Drum mode is used when the track has a drum map. */
+        arrangement's grid setting. Drum mode is used when the track has a drum map.
+        With a song key set, the notes outside it are shaded, and "Snap to Key" keeps drawn,
+        dragged and transposed notes in it. */
     class PianoRoll : public juce::Component,
                       private juce::ValueTree::Listener,
                       private juce::ScrollBar::Listener,
@@ -18,6 +21,9 @@ namespace cdaw
         ~PianoRoll() override;
 
         te::MidiClip* getClip() const           { return clip.get(); }
+
+        /** The clip being edited is gone from the project (called from the timer). */
+        std::function<void()> onClipRemoved;
         void setDrumMap (std::optional<DrumMap>);
 
         void paint (juce::Graphics&) override;
@@ -57,7 +63,12 @@ namespace cdaw
 
         std::unique_ptr<juce::Component> keys, grid, velocity, ruler;
         juce::Label titleLabel;
-        juce::TextButton quantizeButton { "Quantize" }, drumModeButton;
+        juce::TextButton quantizeButton { "Quantize" }, drumModeButton, keyButton, keySnapButton { "Snap to Key" };
+        KeyScale::Key key;                  // the song's key, as last shown
+
+        /** Whether notes are kept in the key (a key is set, snapping is on, not a drum map). */
+        bool isSnappingToKey() const;
+        void updateKeyControls();
         juce::ScrollBar vScroll { true };
 
         void rebuildRows();

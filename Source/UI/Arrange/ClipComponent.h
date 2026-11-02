@@ -69,8 +69,17 @@ namespace cdaw
         bool lastSelected = false;
         void repaintHandles();      // the strip at the top holding the fade and gain handles
         bool dragging = false;
-        float dragStartGainDb = 0.0f;
         te::TimeDuration dragStartOffset;
+
+        /** This clip and those group editing links to it, as they were when the drag started. */
+        struct LinkedClip
+        {
+            te::Clip::Ptr clip;
+            float startGainDb = 0.0f;
+            te::TimeDuration startOffset;
+        };
+
+        std::vector<LinkedClip> linkedClips;
         juce::String dragInfo;          // read-out shown while dragging (fade length, gain, offset ...)
         std::unique_ptr<te::TransportControl::ReallocationInhibitor> inhibitor;
     };

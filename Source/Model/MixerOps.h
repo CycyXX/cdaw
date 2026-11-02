@@ -26,6 +26,12 @@ namespace cdaw::MixerOps
     juce::Array<te::Plugin*> getInserts (te::Track&);
     bool isInsertPlugin (te::Plugin&);
 
+    /** Moves an insert into the gap `slot` between the list's inserts (0 = before the first,
+        the number of inserts = after the last), leaving the volume, meter and sends where they
+        are. An instrument stays first: it can't be moved and nothing goes before it. Returns
+        false when nothing moved. */
+    bool moveInsert (te::PluginList&, te::Plugin&, int slot);
+
     /** Output routing: "Master", another track (bus) or a device output. */
     juce::String describeOutput (te::Track&);
     juce::PopupMenu createOutputMenu (te::Track&);

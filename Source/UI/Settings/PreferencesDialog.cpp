@@ -89,6 +89,7 @@ namespace cdaw
                 info.setBounds (bottom);
             }
 
+            AudioDeviceSetup::ScopedSettingsShowing showing;     // the user is choosing: no automatic switching
             juce::AudioDeviceSelectorComponent selector;
             juce::TextButton monoButton { "Inputs as mono" }, stereoButton { "Inputs as stereo pairs" };
             juce::Label info;
@@ -183,10 +184,10 @@ namespace cdaw
                 addNote ("CDAW already compensates the latency the driver reports. Measure with a loopback cable "
                          "(output -> input) and adjust here only if recordings are still early or late.");
 
-                midiMode.addItemList ({ "Overdub (merge into existing clip)", "Replace existing clips", "New clips (keep both)" }, 1);
-                midiMode.setSelectedItemIndex (s.getInt (SettingKeys::midiRecordMode, 0), juce::dontSendNotification);
+                midiMode.addItemList ({ "Overdub (merge into existing clip)", "Replace existing clips", "New take (keep both, choose or comp later)" }, 1);
+                midiMode.setSelectedItemIndex (s.getInt (SettingKeys::midiRecordMode, 2), juce::dontSendNotification);
                 midiMode.onChange = [this] { apply(); };
-                addRow ("MIDI recording", midiMode);
+                addRow ("Recording MIDI over a clip", midiMode);
 
                 countIn.addItemList ({ "1 bar", "2 bars" }, 1);
                 countIn.setSelectedItemIndex (juce::jlimit (0, 1, s.getInt (SettingKeys::countInBars, 1) - 1), juce::dontSendNotification);

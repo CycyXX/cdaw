@@ -12,7 +12,8 @@ namespace cdaw
         The .cdaw file is Tracktion's edit XML under CDAW's own extension. Projects saved by
         earlier CDAW builds as <Name>.tracktionedit are converted when opened: the project is
         saved as <Name>.cdaw and the old file is moved into Backups/. */
-    class ProjectSession : private juce::Timer
+    class ProjectSession : private juce::Timer,
+                           private te::TransportControl::Listener
     {
     public:
         static constexpr const char* projectFileSuffix = ".cdaw";
@@ -79,6 +80,11 @@ namespace cdaw
             project folder), then continues working in the new location. */
         bool saveAs (const juce::File& newEditFile);
 
+        /** Saves as the next numbered version beside this one (Song -> Song_02 -> Song_03, see
+            ProjectVersions) with `note` saying what changed, then continues working in it. The
+            version before stays as it was last saved. Returns the new file, or {} on failure. */
+        juce::File saveNewVersion (const juce::String& note);
+
         /** Quick background save to the .tmp_ sibling, used for crash recovery. */
         void autosave();
 
@@ -96,6 +102,11 @@ namespace cdaw
         std::unique_ptr<MasterAnalyser> analyser;
 
         void timerCallback() override           { autosave(); }
+
+        // A recording over something already on the track lands as a new take: Tracktion leaves the
+        // old clips alone (overlay mode, just for this moment), then CompOps gathers them up.
+        void recordingAboutToStop (te::InputDeviceInstance&, te::EditItemID) override;
+        void recordingFinished (te::InputDeviceInstance&, te::EditItemID, const te::Clip::Array&) override;
 
         void configureEdit (bool isNew);
         void writeBackup();

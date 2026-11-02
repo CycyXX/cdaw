@@ -93,6 +93,30 @@ namespace cdaw::MixerOps
             && dynamic_cast<te::AuxReturnPlugin*> (&p) == nullptr;
     }
 
+    bool moveInsert (te::PluginList& list, te::Plugin& plugin, int slot)
+    {
+        juce::Array<te::Plugin*> inserts;
+        for (auto p : list.getPlugins())
+            if (isInsertPlugin (*p))
+                inserts.add (p);
+
+        const int index = inserts.indexOf (&plugin);
+        if (index < 0 || plugin.isSynth())
+            return false;
+
+        const int first = inserts.size() > 0 && inserts.getFirst()->isSynth() ? 1 : 0;
+        slot = juce::jlimit (first, inserts.size(), slot);
+        if (slot == index || slot == index + 1)
+            return false;
+
+        const bool after = slot == inserts.size();
+        auto* neighbour = after ? inserts.getLast() : inserts[slot];
+        te::Plugin::Ptr keep = &plugin;
+        plugin.removeFromParent();
+        list.insertPlugin (keep, list.indexOf (neighbour) + (after ? 1 : 0), nullptr);
+        return true;
+    }
+
     juce::Array<te::Plugin*> getInserts (te::Track& track)
     {
         juce::Array<te::Plugin*> result;

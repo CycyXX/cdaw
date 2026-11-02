@@ -25,7 +25,10 @@ namespace cdaw
         /** Inserts after `after` (or at the end) and selects the new track. */
         te::AudioTrack::Ptr addAudioTrack (te::Edit&, te::SelectionManager*, te::Track* after = nullptr, const juce::String& name = {},
                                            ChannelMode = ChannelMode::mono);
-        te::AudioTrack::Ptr addInstrumentTrack (te::Edit&, te::SelectionManager*, const juce::PluginDescription*, te::Track* after = nullptr);
+        /** The track listens to every MIDI keyboard; with `arm` it's also armed, so playing is heard
+            at once (imports pass false: a project's many instrument tracks shouldn't all play). */
+        te::AudioTrack::Ptr addInstrumentTrack (te::Edit&, te::SelectionManager*, const juce::PluginDescription*, te::Track* after = nullptr,
+                                                bool arm = true);
         te::AudioTrack::Ptr addFxTrack (te::Edit&, te::SelectionManager*, te::Track* after = nullptr);
         te::FolderTrack::Ptr addFolderTrack (te::Edit&, te::SelectionManager*, bool asGroup, te::Track* after = nullptr);
 

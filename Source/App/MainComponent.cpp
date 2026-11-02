@@ -4,14 +4,23 @@
 #include "../Engine/AudioDeviceSetup.h"
 #include "../Model/ClipOps.h"
 #include "../UI/Project/MissingFilesDialog.h"
+#include "../Model/CubaseProject.h"
 #include "../Model/DawProject.h"
 #include "../Model/ProjectSession.h"
+#include "../Model/ProjectVersions.h"
+#include "../Model/TemplateOps.h"
 #include "../Model/TrackOps.h"
+#include "../UI/Notes/NotesPage.h"
+#include "../UI/Project/TemplateDialogs.h"
 #include "../UI/Arrange/ArrangeView.h"
 #include "../UI/Inspector/InspectorPanel.h"
 #include "../UI/LowerZone.h"
 #include "../Render/ExportService.h"
 #include "../UI/Plugins/PluginMenus.h"
+#include "../Plugins/BuiltInPlugins.h"
+#include "../Plugins/LeadPlugin.h"
+#include "../Plugins/SynthPlugin.h"
+#include "../UI/Common/ProgressWindow.h"
 #include "../UI/Common/StatusBar.h"
 #include "../UI/LookAndFeel/Palette.h"
 #include "../UI/Transport/TransportBar.h"
@@ -144,6 +153,11 @@ namespace cdaw
             transportBar = std::make_unique<TransportBar> (s->getEdit(), s->getViewState(), ctx.commandManager);
             arrangeView = std::make_unique<ArrangeView> (*s, s->getViewState());
             arrangeView->onTrackCommand = [this] (int cmd) { performTrackCommand (cmd); };
+            arrangeView->onEditLyrics = [this] (te::ArrangerClip& section)
+            {
+                setLowerZoneVisible (true, (int) LowerZone::Page::notes);
+                lowerZone->editLyrics (section);
+            };
             arrangeView->onOpenClipEditor = [this] (te::Clip& clip)
             {
                 if (auto mc = dynamic_cast<te::MidiClip*> (&clip))
@@ -292,8 +306,16 @@ namespace cdaw
         sessionChanged();
     }
 
+    void MainComponent::commitNotes()
+    {
+        if (lowerZone != nullptr)
+            if (auto* notes = lowerZone->getNotesPage())
+                notes->commitPendingEdits();
+    }
+
     void MainComponent::confirmDiscardOrSave (std::function<void (bool)> onDone)
     {
+        commitNotes();   // so typing that hasn't been written yet counts as a change
         auto* s = getSession();
 
         // A take being recorded only becomes part of the project when recording stops.
@@ -319,19 +341,21 @@ namespace cdaw
         });
     }
 
-    void MainComponent::newProjectDialog()
+    void MainComponent::newProjectDialog (const juce::File& templateFile)
     {
-        confirmDiscardOrSave ([this] (bool ok)
+        confirmDiscardOrSave ([this, templateFile] (bool ok)
         {
             if (! ok)
                 return;
 
-            auto* aw = new juce::AlertWindow ("New Project", "Project name:", juce::MessageBoxIconType::NoIcon, this);
+            const bool fromTemplate = templateFile.existsAsFile();
+            auto* aw = new juce::AlertWindow (fromTemplate ? "New Project from \"" + templateFile.getFileNameWithoutExtension() + "\"" : "New Project",
+                                              "Project name:", juce::MessageBoxIconType::NoIcon, this);
             aw->addTextEditor ("name", "Untitled");
             aw->addButton ("Create", 1, juce::KeyPress (juce::KeyPress::returnKey));
             aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
-            aw->enterModalState (true, juce::ModalCallbackFunction::create ([this, aw] (int result)
+            aw->enterModalState (true, juce::ModalCallbackFunction::create ([this, aw, templateFile, fromTemplate] (int result)
             {
                 if (result == 1)
                 {
@@ -339,6 +363,12 @@ namespace cdaw
                     auto folder = ctx.settings.getProjectsFolder();
                     folder.createDirectory();
                     auto file = ProjectSession::createProjectFolder (folder, aw->getTextEditorContents ("name"));
+
+                    if (fromTemplate && ! TemplateOps::createProjectFromTemplate (templateFile, file))
+                        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "New Project",
+                                                                "Could not read the template " + templateFile.getFullPathName()
+                                                                  + ". The project starts empty.", "OK", this);
+
                     openProject (file);
 
                     if (auto* s = getSession())
@@ -392,6 +422,7 @@ namespace cdaw
 
     void MainComponent::saveProject (std::function<void (bool)> onDone)
     {
+        commitNotes();
         auto* s = getSession();
         bool ok = s != nullptr && s->save();
         statusBar->showMessage (ok ? "Saved " + s->getName() : juce::String ("Save failed - see the log"));
@@ -411,6 +442,7 @@ namespace cdaw
         if (s == nullptr)
             return;
 
+        commitNotes();
         auto& ctx = AppContext::get();
         chooser = std::make_unique<juce::FileChooser> ("Save Project As (choose a new project name)",
                                                        ctx.settings.getProjectsFolder().getChildFile (s->getName() + " copy"),
@@ -436,6 +468,109 @@ namespace cdaw
                                   if (onDone)
                                       onDone (ok);
                               });
+    }
+
+    void MainComponent::saveNewVersionDialog()
+    {
+        auto* s = getSession();
+        if (s == nullptr)
+            return;
+
+        commitNotes();
+        auto next = ProjectVersions::getNextVersionFile (s->getEditFile());
+        auto* aw = new juce::AlertWindow ("Save New Version",
+                                          "Saves as " + next.getFileName() + " next to " + s->getEditFile().getFileName()
+                                            + " (which stays as last saved) and continues in it.\n\nWhat's new in this version? (optional)",
+                                          juce::MessageBoxIconType::NoIcon, this);
+        aw->addTextEditor ("note", {});
+        aw->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+        aw->enterModalState (true, juce::ModalCallbackFunction::create ([this, aw, next] (int result)
+        {
+            auto* sess = getSession();
+            if (result != 1 || sess == nullptr)
+                return;
+
+            auto file = sess->saveNewVersion (aw->getTextEditorContents ("note"));
+
+            if (file == juce::File())
+            {
+                statusBar->showMessage ("Save New Version failed - see the log");
+                showSaveFailed (next);
+                return;
+            }
+
+            AppContext::get().settings.addRecentProject (file);
+            statusBar->showMessage ("Saved new version " + file.getFileName());
+            updateTitle();
+            menuItemsChanged();
+        }), true);
+    }
+
+    juce::PopupMenu MainComponent::createVersionsMenu()
+    {
+        juce::PopupMenu m;
+        auto* s = getSession();
+
+        if (s == nullptr)
+            return m;
+
+        m.addCommandItem (&AppContext::get().commandManager, CommandIDs::saveNewVersion);
+        m.addSeparator();
+
+        for (auto& v : ProjectVersions::list (s->getEditFile()))
+        {
+            const bool current = v.file == s->getEditFile();
+            auto label = v.file.getFileNameWithoutExtension() + "   " + v.modified.formatted ("%d %b %Y %H:%M");
+
+            if (v.note.isNotEmpty())
+                label << juce::String::fromUTF8 ("   \xe2\x80\x94 ") << v.note;
+
+            m.addItem (label, ! current, current, [this, file = v.file]
+            {
+                confirmDiscardOrSave ([this, file] (bool ok) { if (ok) openProjectChecked (file); });
+            });
+        }
+
+        return m;
+    }
+
+    void MainComponent::saveAsTemplateDialog()
+    {
+        auto* s = getSession();
+        if (s == nullptr)
+            return;
+
+        commitNotes();
+        TemplateDialogs::askNameAndSave (this, "Save as Template", s->getName(), TemplateOps::getTemplatesFolder(), TemplateOps::templateSuffix,
+                                         [this] (const juce::File& f)
+                                         {
+                                             auto* sess = getSession();
+                                             return sess != nullptr && TemplateOps::saveTemplate (sess->getEdit(), f);
+                                         },
+                                         [this] (const juce::File& f)
+                                         {
+                                             statusBar->showMessage (f != juce::File() ? "Saved template \"" + f.getFileNameWithoutExtension() + "\" (File > New from Template)"
+                                                                                       : juce::String ("Could not save the template"));
+                                             menuItemsChanged();
+                                         });
+    }
+
+    juce::PopupMenu MainComponent::createTemplatesMenu()
+    {
+        juce::PopupMenu m;
+        auto templates = TemplateOps::listFiles (TemplateOps::getTemplatesFolder(), TemplateOps::templateSuffix);
+
+        if (templates.isEmpty())
+            m.addItem ("(none yet: set up a project, then File > Save as Template)", false, false, [] {});
+
+        for (auto& f : templates)
+            m.addItem (f.getFileNameWithoutExtension(), [this, f] { newProjectDialog (f); });
+
+        m.addSeparator();
+        m.addItem ("Open Templates Folder", [] { TemplateOps::getTemplatesFolder().startAsProcess(); });
+        return m;
     }
 
     void MainComponent::importAudioDialog()
@@ -559,9 +694,19 @@ namespace cdaw
                     return;
 
                 DawProject::Report report;
-                auto result = DawProject::importInto (sess->getEdit(), source, sess->getAudioFolder().getChildFile ("Imported"), report);
-                sess->getEdit().getUndoManager().clearUndoHistory();
-                sess->save();
+                juce::Result result = juce::Result::ok();
+
+                {
+                    ProgressWindow progress ("Importing " + source.getFileName(), this);
+                    DawProject::ImportOptions options;
+                    options.progress = [&progress] (double p, const juce::String& message) { progress.update (p, message); };
+
+                    result = DawProject::importInto (sess->getEdit(), source, sess->getAudioFolder().getChildFile ("Imported"), report, options);
+                    progress.update (1.0, "Saving...");
+                    sess->getEdit().getUndoManager().clearUndoHistory();
+                    sess->save();
+                }
+
                 updateTitle();
 
                 if (result.failed())
@@ -574,6 +719,80 @@ namespace cdaw
                 showDawProjectReport (this, "Imported " + source.getFileName(), report);
             });
         });
+    }
+
+    void MainComponent::importCubaseProjectDialog()
+    {
+        confirmDiscardOrSave ([this] (bool ok)
+        {
+            if (! ok)
+                return;
+
+            auto start = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+            if (start.getChildFile ("Cubase Projects").isDirectory())
+                start = start.getChildFile ("Cubase Projects");
+
+            chooser = std::make_unique<juce::FileChooser> ("Import Cubase Project", start, "*" + juce::String (CubaseProject::fileExtension));
+            chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                  [this] (const juce::FileChooser& fc)
+            {
+                auto source = fc.getResult();
+                if (! source.existsAsFile())
+                    return;
+
+                auto options = juce::MessageBoxOptions::makeOptionsYesNoCancel (
+                    juce::MessageBoxIconType::QuestionIcon, "Import Cubase Project",
+                    "Cubase's own effects only run inside Cubase. CDAW replaces them with its own where they sound the same "
+                    "(Frequency by the EQ, Compressor by C-Comp).\n\n"
+                    "Should it also use CDAW effects that only sound similar (limiters, tube and vintage compressors, "
+                    "the de-esser...)? The import report lists them, so you can listen.",
+                    "Also similar ones", "Only the same sound", "Cancel", this);
+
+                juce::AlertWindow::showAsync (options, [this, source] (int result)
+                {
+                    if (result != 0)
+                        importCubaseProject (source, result == 1);
+                });
+            });
+        });
+    }
+
+    void MainComponent::importCubaseProject (const juce::File& source, bool matchSimilarPlugins)
+    {
+        auto& ctx = AppContext::get();
+        ctx.settings.getProjectsFolder().createDirectory();
+        auto file = ProjectSession::createProjectFolder (ctx.settings.getProjectsFolder(), source.getFileNameWithoutExtension());
+        openProject (file);
+
+        auto* sess = getSession();
+        if (sess == nullptr)
+            return;
+
+        // Plugins load and audio files are copied: this can take a while.
+        DawProject::Report report;
+        juce::Result result = juce::Result::ok();
+
+        {
+            ProgressWindow progress ("Importing " + source.getFileName(), this);
+            CubaseProject::ImportOptions options;
+            options.matchSimilarPlugins = matchSimilarPlugins;
+            options.progress = [&progress] (double p, const juce::String& message) { progress.update (p, message); };
+            result = CubaseProject::importInto (sess->getEdit(), source, sess->getAudioFolder().getChildFile ("Imported"), report, options);
+            progress.update (1.0, "Saving...");
+            sess->getEdit().getUndoManager().clearUndoHistory();
+            sess->save();
+        }
+
+        updateTitle();
+
+        if (result.failed())
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Import Cubase Project", result.getErrorMessage(), "OK", this);
+            return;
+        }
+
+        statusBar->showMessage ("Imported " + source.getFileName() + " as " + file.getFullPathName());
+        showDawProjectReport (this, "Imported " + source.getFileName(), report);
     }
 
     void MainComponent::exportDawProjectDialog()
@@ -688,9 +907,11 @@ namespace cdaw
                 auto after = arrangeView != nullptr ? arrangeView->getFirstSelectedTrack() : nullptr;
                 auto track = TrackOps::addInstrumentTrack (edit, &sess->getSelectionManager(), &desc, after);
 
+                // VST3s, C-Synth and C-Lead open their window straight away (the other built-ins have a plain one).
                 if (track != nullptr)
                     if (auto p = track->pluginList.getPlugins().getFirst())
-                        if (dynamic_cast<te::ExternalPlugin*> (p.get()) != nullptr)
+                        if (dynamic_cast<te::ExternalPlugin*> (p.get()) != nullptr || p->getPluginType() == SynthPlugin::xmlTypeName
+                                                                                          || p->getPluginType() == LeadPlugin::xmlTypeName)
                             p->showWindowExplicitly();
             }
         };
@@ -704,6 +925,8 @@ namespace cdaw
             m.addItem (d.name + "   (" + d.manufacturerName + ")", [addTrackWith, d] { addTrackWith (d); });
 
         m.addSectionHeader ("Built-in");
+        m.addItem ("C-Synth", [addTrackWith] { addTrackWith (BuiltInPlugins::getSynthDescription()); });
+        m.addItem ("C-Lead", [addTrackWith] { addTrackWith (BuiltInPlugins::getLeadDescription()); });
         m.addItem ("4OSC Synth", [addTrackWith] { addTrackWith (te::PluginManager::createBuiltInPluginDescription<te::FourOscPlugin> (true)); });
         m.addItem ("Sampler", [addTrackWith] { addTrackWith (te::PluginManager::createBuiltInPluginDescription<te::SamplerPlugin> (true)); });
         m.addSeparator();
@@ -763,17 +986,21 @@ namespace cdaw
 
         if (index == 0)
         {
-            add ({ CommandIDs::newProject, CommandIDs::openProject });
+            add ({ CommandIDs::newProject });
+            m.addSubMenu ("New from Template", createTemplatesMenu());
+            add ({ CommandIDs::openProject });
 
             juce::PopupMenu recent;
             for (auto& path : ctx.settings.getRecentProjects())
                 recent.addItem (path, [this, path] { confirmDiscardOrSave ([this, path] (bool ok) { if (ok) openProjectChecked (juce::File (path)); }); });
 
             m.addSubMenu ("Open Recent", recent, recent.getNumItems() > 0);
-            add ({ 0, CommandIDs::saveProject, CommandIDs::saveProjectAs, CommandIDs::revealProjectFolder, CommandIDs::locateMissingFiles,
-                   0, CommandIDs::importAudio, CommandIDs::importMidi, CommandIDs::importDawProject,
+            add ({ 0, CommandIDs::saveProject, CommandIDs::saveProjectAs, CommandIDs::saveNewVersion });
+            m.addSubMenu ("Versions", createVersionsMenu(), getSession() != nullptr);
+            add ({ CommandIDs::saveAsTemplate, CommandIDs::revealProjectFolder, CommandIDs::locateMissingFiles,
+                   0, CommandIDs::importAudio, CommandIDs::importMidi, CommandIDs::importDawProject, CommandIDs::importCubaseProject,
                    0, CommandIDs::exportMixdown, CommandIDs::exportStems, CommandIDs::exportMidi, CommandIDs::exportDawProject,
-                   0, CommandIDs::showAudioSettings, CommandIDs::showPreferences,
+                   0, CommandIDs::showAudioSettings, CommandIDs::reconnectAudioDevice, CommandIDs::showPreferences,
                    0, juce::StandardApplicationCommandIDs::quit });
         }
         else if (index == 1)
@@ -781,8 +1008,15 @@ namespace cdaw
             add ({ CommandIDs::undo, CommandIDs::redo, 0,
                    CommandIDs::deleteSelection, CommandIDs::duplicate, CommandIDs::splitAtCursor, CommandIDs::muteClips, 0,
                    CommandIDs::deleteRangeCloseGap, CommandIDs::nudgeLeft, CommandIDs::nudgeRight, 0,
-                   CommandIDs::crossfadeClips, CommandIDs::toggleClipLoop, CommandIDs::resetClipGain, 0,
-                   CommandIDs::addSection, 0,
+                   CommandIDs::crossfadeClips, CommandIDs::toggleClipLoop, CommandIDs::resetClipGain, 0 });
+
+            juce::PopupMenu takes;
+            for (auto id : { CommandIDs::nextTake, CommandIDs::prevTake, CommandIDs::toggleTakeLanes,
+                             CommandIDs::unpackTakes, CommandIDs::deleteUnusedTakes, CommandIDs::flattenTakes })
+                takes.addCommandItem (cm, id);
+            m.addSubMenu ("Takes", takes);
+
+            add ({ 0, CommandIDs::addSection, 0,
                    CommandIDs::selectAll, CommandIDs::deselectAll, 0,
                    CommandIDs::toggleSnap, CommandIDs::gridFiner, CommandIDs::gridCoarser });
 
@@ -803,13 +1037,26 @@ namespace cdaw
         else if (index == 3)
         {
             add ({ CommandIDs::addAudioTrack, CommandIDs::addStereoAudioTrack, CommandIDs::addInstrumentTrack, CommandIDs::addFxTrack,
-                   CommandIDs::addGroupTrack, CommandIDs::addFolderTrack, 0,
-                   CommandIDs::duplicateTrack, CommandIDs::deleteTrack, CommandIDs::moveTrackUp, CommandIDs::moveTrackDown, 0,
-                   CommandIDs::toggleArm, CommandIDs::toggleMute, CommandIDs::toggleSolo });
+                   CommandIDs::addGroupTrack, CommandIDs::addFolderTrack });
+
+            if (auto* s = getSession())
+            {
+                auto* selected = arrangeView != nullptr ? arrangeView->getFirstSelectedTrack() : nullptr;
+                m.addSubMenu ("Insert Track Preset", TemplateDialogs::createInsertTrackPresetMenu (s->getEdit(), selected, &s->getSelectionManager()));
+                m.addItem ("Save Track as Preset...", selected != nullptr, false, [this, t = te::Track::Ptr (selected)]
+                {
+                    if (t != nullptr)
+                        TemplateDialogs::saveTrackPreset (this, *t);
+                });
+            }
+
+            add ({ 0, CommandIDs::duplicateTrack, CommandIDs::deleteTrack, CommandIDs::moveTrackUp, CommandIDs::moveTrackDown, 0,
+                   CommandIDs::toggleArm, CommandIDs::toggleMute, CommandIDs::toggleSolo, 0,
+                   CommandIDs::groupSelectedTracks, CommandIDs::toggleGroupEdit });
         }
         else if (index == 4)
         {
-            add ({ CommandIDs::toggleInspector, CommandIDs::toggleEditor, CommandIDs::toggleMixer, CommandIDs::toggleAutomation,
+            add ({ CommandIDs::toggleInspector, CommandIDs::toggleEditor, CommandIDs::toggleMixer, CommandIDs::toggleNotes, CommandIDs::toggleAutomation,
                    CommandIDs::toggleArranger, CommandIDs::toggleSpectrum, 0,
                    CommandIDs::zoomIn, CommandIDs::zoomOut, CommandIDs::zoomToFit, 0,
                    CommandIDs::zoomInVertical, CommandIDs::zoomOutVertical });

@@ -38,8 +38,12 @@ namespace cdaw
         void checkProjectHealth();
 
         void openProjectChecked (const juce::File& editFile);   // offers autosave recovery first
-        void newProjectDialog();
+        /** Asks for a name and creates the project, from a template if one is given. */
+        void newProjectDialog (const juce::File& templateFile = {});
         void openProjectDialog();
+        /** Imports a Cubase project (.cpr) as a new CDAW project and opens it, with progress.
+            `matchSimilarPlugins`: see CubaseProject::ImportOptions. */
+        void importCubaseProject (const juce::File& source, bool matchSimilarPlugins);
 
         // ApplicationCommandTarget
         juce::ApplicationCommandTarget* getNextCommandTarget() override  { return nullptr; }
@@ -75,12 +79,19 @@ namespace cdaw
         void saveProject (std::function<void (bool)> onDone = nullptr);
 
         void saveProjectAsDialog (std::function<void (bool)> onDone = nullptr);
+        void saveNewVersionDialog();
+        void saveAsTemplateDialog();
+        juce::PopupMenu createVersionsMenu();
+        juce::PopupMenu createTemplatesMenu();
+        /** Writes text still being typed on the Notes page into the project (before saving). */
+        void commitNotes();
         void showSaveFailed (const juce::File&);
         void openPluginFromFileDialog();
         void importAudioDialog();
         void importMidiDialog();
         void exportMidiDialog();
         void importDawProjectDialog();
+        void importCubaseProjectDialog();
         void exportDawProjectDialog();
         void addInstrumentTrackMenu();
         void performTrackCommand (int commandID);

@@ -1,6 +1,6 @@
 #include "TakeLanes.h"
 #include "../LookAndFeel/Palette.h"
-#include "../../Model/CompOps.h"
+#include "../../Model/GroupEdit.h"
 
 namespace cdaw
 {
@@ -40,47 +40,55 @@ namespace cdaw
 
         for (auto c : ct->getClips())
         {
-            auto wc = dynamic_cast<te::WaveAudioClip*> (c);
-            if (wc == nullptr)
+            if (! CompOps::hasTakes (*c))
                 continue;
 
-            auto files = CompOps::getTakeFiles (*wc);
-            if (files.size() < 2)
+            auto clipRange = c->getEditTimeRange();
+
+            if (viewState.timeToX (clipRange.getEnd()) < 0 || viewState.timeToX (clipRange.getStart()) > getWidth())
                 continue;
 
-            auto active = CompOps::getActiveTake (*wc);
-            auto pos = wc->getPosition();
-            auto x1 = (int) viewState.timeToX (pos.getStart());
-            auto x2 = (int) viewState.timeToX (pos.getEnd());
+            auto colour = c->getColour();
+            auto* audio = dynamic_cast<te::AudioClipBase*> (c);
 
-            if (x2 < 0 || x1 > getWidth())
-                continue;
-
-            for (int row = 0; row < juce::jmin (numRows, files.size()); ++row)
+            for (auto& take : CompOps::getTakes (*c))
             {
-                auto area = juce::Rectangle<int> (x1, row * rowHeight + 2, x2 - x1, rowHeight - 4);
-                const bool isActive = row == active;
-                auto colour = wc->getColour();
+                // Under this piece, as far as the take has material (passes can be shorter than the clip).
+                auto shown = clipRange.getIntersectionWith (take.range);
 
-                g.setColour (isActive ? colour.withAlpha (0.55f) : colour.withAlpha (0.15f));
+                if (take.row >= numRows || shown.isEmpty())
+                    continue;
+
+                auto x1 = (int) viewState.timeToX (shown.getStart());
+                auto x2 = (int) viewState.timeToX (shown.getEnd());
+                auto area = juce::Rectangle<int> (x1, take.row * rowHeight + 2, x2 - x1, rowHeight - 4);
+
+                g.setColour (take.active ? colour.withAlpha (0.55f) : colour.withAlpha (0.15f));
                 g.fillRect (area);
 
-                auto& thumb = getThumbnail (files[row]);
                 auto visible = area.getIntersection (getLocalBounds());
 
-                if (! visible.isEmpty() && ! thumb.isGeneratingProxy())
+                if (take.midi != nullptr)
                 {
-                    auto toSource = [&] (int x)
-                    {
-                        auto t = viewState.xToTime (x);
-                        return te::TimePosition::fromSeconds (((t - pos.getStart()) + pos.getOffset()).inSeconds() * wc->getSpeedRatio());
-                    };
+                    drawNotes (g, take, visible, shown);
+                }
+                else if (! visible.isEmpty() && audio != nullptr)
+                {
+                    auto& thumb = getThumbnail (take.file);
 
-                    g.setColour (isActive ? Palette::text : Palette::textDim.withAlpha (0.6f));
-                    thumb.drawChannels (g, visible, { toSource (visible.getX()), toSource (visible.getRight()) }, wc->getGain());
+                    if (! thumb.isGeneratingProxy())
+                    {
+                        auto toSource = [&] (int x)
+                        {
+                            return te::TimePosition::fromSeconds ((viewState.xToTime (x) - take.range.getStart()).inSeconds() * audio->getSpeedRatio());
+                        };
+
+                        g.setColour (take.active ? Palette::text : Palette::textDim.withAlpha (0.6f));
+                        thumb.drawChannels (g, visible, { toSource (visible.getX()), toSource (visible.getRight()) }, audio->getGain());
+                    }
                 }
 
-                if (isActive)
+                if (take.active)
                 {
                     g.setColour (colour);
                     g.drawRect (area, 1);
@@ -109,6 +117,43 @@ namespace cdaw
 
         g.setColour (Palette::windowBackground);
         g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
+    }
+
+    void TakeLanes::drawNotes (juce::Graphics& g, const CompOps::TakeInfo& take, juce::Rectangle<int> area, te::TimeRange shown)
+    {
+        auto& notes = take.midi->getNotes();
+
+        if (area.isEmpty() || notes.isEmpty())
+            return;
+
+        int lo = 127, hi = 0;
+
+        for (auto n : notes)
+        {
+            lo = juce::jmin (lo, n->getNoteNumber());
+            hi = juce::jmax (hi, n->getNoteNumber());
+        }
+
+        auto& ts = track->edit.tempoSequence;
+        auto range = (float) juce::jmax (12, hi - lo + 1);
+        auto noteH = juce::jmax (1.0f, (float) area.getHeight() / range);
+        auto colour = take.active ? Palette::text : Palette::textDim.withAlpha (0.7f);
+
+        for (auto n : notes)
+        {
+            auto s = ts.toTime (take.midiStart + te::BeatDuration::fromBeats (n->getStartBeat().inBeats()));
+            auto e = ts.toTime (take.midiStart + te::BeatDuration::fromBeats (n->getEndBeat().inBeats()));
+
+            if (e <= shown.getStart() || s >= shown.getEnd())
+                continue;
+
+            auto x1 = (float) viewState.timeToX (juce::jmax (s, shown.getStart()));
+            auto x2 = (float) viewState.timeToX (juce::jmin (e, shown.getEnd()));
+            auto y = (float) area.getBottom() - (float) (n->getNoteNumber() - lo + 1) * noteH;
+
+            g.setColour (colour);
+            g.fillRect (juce::Rectangle<float> (x1, y, juce::jmax (1.5f, x2 - x1), noteH));
+        }
     }
 
     void TakeLanes::mouseMove (const juce::MouseEvent& e)
@@ -158,18 +203,13 @@ namespace cdaw
         if (! e.mouseWasDraggedSinceMouseDown() || range.getLength() < te::TimeDuration::fromSeconds (0.005))
         {
             // Click: use this take for the whole clip piece under the mouse.
-            if (auto ct = dynamic_cast<te::ClipTrack*> (track.get()))
-                for (auto c : ct->getClips())
-                    if (auto wc = dynamic_cast<te::WaveAudioClip*> (c); wc != nullptr && wc->getEditTimeRange().contains (viewState.xToTime (e.x)))
-                    {
-                        um.beginNewTransaction ("Choose take");
-                        CompOps::setActiveTake (*wc, swipeRow);
-                    }
+            um.beginNewTransaction ("Choose take");
+            GroupEdit::useTakeAt (*track, viewState.xToTime (e.x), swipeRow);
         }
         else
         {
             um.beginNewTransaction ("Comp take " + juce::String (swipeRow + 1));
-            CompOps::compRange (*track, range, swipeRow);
+            GroupEdit::compRange (*track, range, swipeRow);
         }
 
         swipeRow = -1;

@@ -106,6 +106,16 @@ namespace cdaw
                 ch[0] = ch[1] = 0.0;
     }
 
+    void ReverbEngine::jumpTo (const Settings& settings)
+    {
+        const double k = rate / 48000.0;
+        for (int i = 0; i < numLines; ++i)
+            lineLength[i] = baseLengths[i] * sizeScale (settings.size) * k;
+
+        lastDry = std::cos (settings.mix * juce::MathConstants<float>::halfPi);
+        lastWet = std::sin (settings.mix * juce::MathConstants<float>::halfPi);
+    }
+
     void ReverbEngine::updateFilters (const Settings& settings)
     {
         const float now[4] { settings.preLowCut, settings.preHighCut, settings.postLowCut, settings.postHighCut };

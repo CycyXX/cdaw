@@ -1,5 +1,5 @@
 // Renders the main UI components offscreen to PNGs for visual inspection.
-// Enabled with CDAW_SNAPSHOTS=1; images go to %TEMP%\CDAW_Tests\snapshots.
+// Enabled with CDAW_SNAPSHOTS=1; images go to CDAW_SNAPSHOT_DIR if set, else %TEMP%\CDAW_Tests\snapshots.
 
 #include "TestEngine.h"
 #include "Model/ClipOps.h"
@@ -10,9 +10,13 @@
 #include "Model/ArrangerOps.h"
 #include "Engine/MasterAnalyser.h"
 #include "Model/CompOps.h"
+#include "Model/GroupEdit.h"
+#include "Model/KeyScale.h"
 #include "Model/ProjectSession.h"
+#include "Model/SongNotes.h"
 #include "Model/TrackOps.h"
 #include "UI/Arrange/ArrangeView.h"
+#include "UI/Notes/NotesPage.h"
 #include "UI/LookAndFeel/CDAWLookAndFeel.h"
 #include "UI/Mixer/MixerView.h"
 #include "UI/Mixer/SpectrumView.h"
@@ -26,7 +30,8 @@ namespace cdaw::test
 
         static void save (juce::Component& c, const juce::String& name)
         {
-            auto dir = getTestDir().getChildFile ("snapshots");
+            auto custom = juce::SystemStats::getEnvironmentVariable ("CDAW_SNAPSHOT_DIR", {});
+            auto dir = custom.isNotEmpty() ? juce::File (custom) : getTestDir().getChildFile ("snapshots");
             dir.createDirectory();
             auto img = c.createComponentSnapshot (c.getLocalBounds(), true, 1.0f);
             auto file = dir.getChildFile (name + ".png");
@@ -119,6 +124,18 @@ namespace cdaw::test
                 ArrangerOps::addSection (edit, { te::TimePosition::fromSeconds (2.0), te::TimePosition::fromSeconds (6.0) }, "Verse");
                 ArrangerOps::addSection (edit, { te::TimePosition::fromSeconds (6.0), te::TimePosition::fromSeconds (12.0) }, "Chorus");
 
+                // The song's notebook: lyrics on two sections, notes for the song.
+                {
+                    auto sections = ArrangerOps::getSections (edit);
+                    SongNotes::setLyrics (*sections[1], "Headlights on the overpass\nthe city hums in A minor\n"
+                                                        "you said we'd never make it out\nI said just drive a little further", nullptr);
+                    SongNotes::setLyrics (*sections[2], "Night drive, night drive\nnothing but the road and you\n"
+                                                        "Night drive, night drive\nwe're running every light on blue", nullptr);
+                    SongNotes::setProjectNotes (edit, "96 BPM, A minor.\n\nIdeas\n- half-time feel for the last chorus\n"
+                                                      "- octave lead over the bridge, C-Lead Supersaw Anthem\n- try a key change up to B minor?\n\n"
+                                                      "To do\n- retrack the verse bass\n- harmony vocal in chorus 2");
+                }
+
                 if (auto gclip = dynamic_cast<te::AudioClipBase*> (gtr->getClips().getFirst()))
                 {
                     gclip->setGainDB (-4.5f);
@@ -151,6 +168,25 @@ namespace cdaw::test
                     roll.setBounds (0, 0, 1200, 420);
                     juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
                     save (roll, "pianoroll");
+                }
+
+                {
+                    // With a song key: the notes outside it shaded, the key's notes marked on the keyboard.
+                    KeyScale::setKey (edit, { 0, "Major" }, nullptr);
+                    KeyScale::setSnapEnabled (edit, true);
+                    PianoRoll roll (vs, mc2);
+                    roll.setBounds (0, 0, 1200, 420);
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+                    save (roll, "pianoroll_key");
+                }
+
+                {
+                    edit.getTransport().setPosition (te::TimePosition::fromSeconds (7.0));   // in the chorus
+                    NotesPage notes (vs);
+                    notes.setBounds (0, 0, 1200, 420);
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+                    save (notes, "notes");
+                    expect (notes.getLyricSheet().startsWith ("[Verse]"), "Lyric sheet in song order");
                 }
 
                 {
@@ -213,6 +249,77 @@ namespace cdaw::test
 
                 // Kept, so the demo can be opened in the app (e.g. for the README screenshots).
                 session.save();
+            }
+
+            // Takes and group editing: a drum kit edited as one, a part recorded over itself on a
+            // MIDI track. The lanes show passes of different lengths.
+            {
+                auto takesFile = ProjectSession::createProjectFolder (dir, "TakesDemo");
+                ProjectSession session (engine, takesFile);
+                auto& edit = session.getEdit();
+                auto& vs = session.getViewState();
+                auto at = [] (double s) { return te::TimePosition::fromSeconds (s); };
+
+                auto record = [&] (te::AudioTrack& t, const juce::File& f, double start)
+                {
+                    te::AudioFile af (edit.engine, f);
+                    auto c = t.insertWaveClip (f.getFileNameWithoutExtension(), f, { { at (start), te::TimeDuration::fromSeconds (af.getLength()) }, {} }, false);
+                    CompOps::absorbRecording (*c);
+                };
+
+                auto kick = te::getAudioTracks (edit)[0];
+                kick->setName ("Kick");
+                auto snare = TrackOps::addAudioTrack (edit, nullptr, nullptr, "Snare");
+                auto overheads = TrackOps::addAudioTrack (edit, nullptr, nullptr, "Overheads");
+                auto folder = GroupEdit::groupTracks (edit, nullptr, { kick, snare.get(), overheads.get() });
+                folder->setName ("Drums");
+
+                int passes = 0;
+                using KitPiece = std::pair<te::AudioTrack*, double>;
+
+                for (auto [t, freq] : { KitPiece { kick, 60.0 }, KitPiece { snare.get(), 180.0 }, KitPiece { overheads.get(), 900.0 } })
+                {
+                    auto pass1 = writeSineFile ("snap_kit" + juce::String (++passes) + "a", 12.0, 0.25f, freq);
+                    auto pass2 = writeSineFile ("snap_kit" + juce::String (passes) + "b", 8.0, 0.55f, freq);
+                    auto pass3 = writeSineFile ("snap_kit" + juce::String (passes) + "c", 6.0, 0.8f, freq);
+                    record (*t, pass1, 0.0);
+                    record (*t, pass2, 2.0);
+                    record (*t, pass3, 4.0);
+                }
+
+                // Comped on the group: the same cut through every drum track.
+                GroupEdit::compRange (*kick, { at (6.0), at (8.0) }, 0);
+                EditViewState::setShowingTakes (*kick, true);
+
+                auto keys = TrackOps::addInstrumentTrack (edit, nullptr, nullptr);
+                keys->setName ("Keys");
+
+                auto recordMidi = [&] (double start, double length, int root)
+                {
+                    auto mc = te::insertMIDIClip (*keys, "Keys", { at (start), at (start + length) });
+
+                    for (int beat = 0; beat < (int) (length * 2.0); ++beat)
+                        mc->getSequence().addNote (root + (beat % 4) * 3, te::BeatPosition::fromBeats (beat), te::BeatDuration::fromBeats (0.75), 100, 0, nullptr);
+
+                    CompOps::absorbRecording (*mc);
+                };
+
+                recordMidi (0.0, 12.0, 48);
+                recordMidi (2.0, 6.0, 60);
+                recordMidi (6.0, 6.0, 55);
+                EditViewState::setShowingTakes (*keys, true);
+
+                vs.pixelsPerSecond = 90.0;
+                ArrangeView arrange (session, vs);
+                arrange.setBounds (0, 0, 1400, 640);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+                save (arrange, "arrange_takes");
+
+                // A selection reaches every drum track.
+                GroupEdit::selectClip (session.getSelectionManager(), *snare->getClips()[0], false);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+                save (arrange, "arrange_group_selected");
+                session.getSelectionManager().deselectAll();
             }
 
             juce::LookAndFeel::setDefaultLookAndFeel (nullptr);

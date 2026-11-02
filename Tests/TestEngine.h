@@ -11,6 +11,20 @@ namespace cdaw::test
     struct TestEngineBehaviour : public te::EngineBehaviour
     {
         bool autoInitialiseDeviceManager() override     { return false; }
+
+        // Recordings go in the project's Audio folder, as in CDAW itself.
+        juce::File getFileForNewAudioRecording (te::Track& track, const juce::String& ext) override
+        {
+            auto editFile = track.edit.editFileRetriever ? track.edit.editFileRetriever() : juce::File();
+
+            if (editFile == juce::File())
+                return {};
+
+            auto folder = editFile.getParentDirectory().getChildFile ("Audio");
+            folder.createDirectory();
+            return folder.getNonexistentChildFile (juce::File::createLegalFileName (track.getName()).replaceCharacter (' ', '_'),
+                                                   ext.startsWithChar ('.') ? ext : "." + ext, false);
+        }
     };
 
     struct TestUIBehaviour : public te::UIBehaviour

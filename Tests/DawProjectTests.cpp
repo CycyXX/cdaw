@@ -120,9 +120,25 @@ namespace cdaw::test
                 // Re-import into a different edit.
                 auto back = te::test_utilities::createTestEdit (engine, 1);
                 DawProject::Report in;
-                result = DawProject::importInto (*back, file, dir.getChildFile ("media"), in);
+                DawProject::ImportOptions options;
+                juce::Array<double> progress;
+                juce::StringArray messages;
+                options.progress = [&] (double p, const juce::String& m) { progress.add (p); messages.add (m); };
+
+                result = DawProject::importInto (*back, file, dir.getChildFile ("media"), in, options);
                 expect (result.wasOk(), result.getErrorMessage());
                 logMessage ("Import: " + in.summary());
+
+                expect (progress.size() > 3, "progress is reported along the way");
+                bool rising = true;
+                for (int i = 1; i < progress.size(); ++i)
+                    rising = rising && progress[i] >= progress[i - 1];
+                expect (rising, "progress never goes backwards");
+                expect (progress.getFirst() == 0.0 && progress.getLast() <= 1.0);
+                expect (messages.joinIntoString ("\n").contains ("Creating tracks"));
+
+                for (auto t : te::getAudioTracks (*back))
+                    expect (! TrackOps::isArmed (*t), t->getName() + " shouldn't be armed after an import");
 
                 auto& ts2 = back->tempoSequence;
                 expectWithinAbsoluteError (ts2.getTempo (0)->getBpm(), 100.0, 1e-6);

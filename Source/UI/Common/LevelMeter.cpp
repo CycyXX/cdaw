@@ -56,6 +56,31 @@ namespace cdaw
         return juce::jlimit (0.0f, 1.0f, std::pow (x, 1.6f));
     }
 
+    float LevelMeter::toProportion (float db) const
+    {
+        if (scale == Scale::fader)
+            return juce::jlimit (0.0f, 1.0f, te::decibelsToVolumeFaderPosition (db));
+
+        return dbToProportion (db);
+    }
+
+    void LevelMeter::setScale (Scale s)
+    {
+        scale = s;
+        repaint();
+    }
+
+    void LevelMeter::resetPeaks()
+    {
+        clipped = false;
+        heldPeak = -100.0f;
+
+        for (int i = 0; i < maxChannels; ++i)
+            peak[i] = -100.0f;
+
+        repaint();
+    }
+
     void LevelMeter::timerCallback()
     {
         // Hidden (e.g. the mixer page isn't showing): no work, no repaints.
@@ -88,7 +113,9 @@ namespace cdaw
                 peakTime[ch] = now;
             }
 
-            if (newDb > 0.0f && ! clipped)
+            heldPeak = juce::jmax (heldPeak, newDb);
+
+            if (newDb > clipThresholdDb && ! clipped)
             {
                 clipped = true;
                 changed = true;
@@ -107,25 +134,30 @@ namespace cdaw
         g.setColour (Palette::laneBackground.darker (0.3f));
         g.fillRect (r);
 
-        auto clipLed = vertical ? r.removeFromTop (4.0f) : r.removeFromRight (4.0f);
+        auto clipLed = vertical ? r.removeFromTop (clipLedHeight) : r.removeFromRight (clipLedHeight);
         g.setColour (clipped ? Palette::meterRed : Palette::panelOutline);
         g.fillRect (clipLed);
 
         auto drawBar = [&] (juce::Rectangle<float> area, float db, float pk)
         {
-            auto p = dbToProportion (db);
+            auto p = toProportion (db);
             auto bar = vertical ? area.withTop (area.getBottom() - area.getHeight() * p)
                                 : area.withWidth (area.getWidth() * p);
 
             juce::ColourGradient grad = vertical
                 ? juce::ColourGradient (Palette::meterGreen, area.getBottomLeft(), Palette::meterRed, area.getTopLeft(), false)
                 : juce::ColourGradient (Palette::meterGreen, area.getTopLeft(), Palette::meterRed, area.getTopRight(), false);
-            grad.addColour (dbToProportion (-12.0f), Palette::meterGreen);
-            grad.addColour (dbToProportion (-3.0f), Palette::meterYellow);
+            grad.addColour (toProportion (-12.0f), Palette::meterGreen);
+            grad.addColour (toProportion (-3.0f), Palette::meterYellow);
+
+            // Everything above 0 dBFS is red on a scale that goes past it.
+            if (scale == Scale::fader)
+                grad.addColour (toProportion (0.0f), Palette::meterRed);
+
             g.setGradientFill (grad);
             g.fillRect (bar);
 
-            auto pp = dbToProportion (pk);
+            auto pp = toProportion (pk);
             if (pp > 0.0f)
             {
                 g.setColour (pk > 0.0f ? Palette::meterRed : Palette::text.withAlpha (0.8f));
@@ -145,15 +177,17 @@ namespace cdaw
         {
             drawBar (r.reduced (0.5f), level[0], peak[0]);
         }
+
+        // Unity mark, level with the fader's 0 dB.
+        if (scale == Scale::fader && vertical)
+        {
+            g.setColour (Palette::text.withAlpha (0.4f));
+            g.fillRect (r.getX(), r.getBottom() - r.getHeight() * toProportion (0.0f) - 0.5f, r.getWidth(), 1.0f);
+        }
     }
 
     void LevelMeter::mouseDown (const juce::MouseEvent&)
     {
-        clipped = false;
-
-        for (int i = 0; i < maxChannels; ++i)
-            peak[i] = -100.0f;
-
-        repaint();
+        resetPeaks();
     }
 }

@@ -33,7 +33,20 @@ namespace cdaw
     {
         setOpaque (true);   // paint() fills the whole component
         meter = std::make_unique<LevelMeter>();
+        meter->setScale (LevelMeter::Scale::fader);
+
+        // Only the master output (post master fader, where the device hard-clips) really clips at
+        // 0 dBFS. Tracks are floating point and can run hot, so their LED marks the end of the
+        // meter instead; the peak readout still goes red above 0 dB.
+        meter->setClipThresholdDb (track == nullptr ? 0.0f : 6.0f);
         addAndMakeVisible (*meter);
+
+        peakLabel.setJustificationType (juce::Justification::centred);
+        peakLabel.setFont (juce::FontOptions (11.0f));
+        peakLabel.setTooltip (track == nullptr ? "Highest master output level since the last reset. Red means the output clipped. Click to reset."
+                                               : "Highest level of this track since the last reset. Red is above 0 dB. Click to reset.");
+        peakLabel.onClick = [this] { meter->resetPeaks(); refreshState(); };
+        addAndMakeVisible (peakLabel);
 
         nameLabel.setJustificationType (juce::Justification::centred);
         nameLabel.setFont (juce::FontOptions (12.5f, juce::Font::bold));
@@ -193,6 +206,14 @@ namespace cdaw
 
             auto db = vp->getVolumeDb();
             dbLabel.setText (db <= -96.0f ? juce::String ("-inf") : juce::String (db, 1), juce::dontSendNotification);
+        }
+
+        {
+            auto held = meter->getHeldPeakDb();
+            peakLabel.setText (held <= -99.0f ? juce::String::fromUTF8 ("-\xe2\x88\x9e")
+                                              : juce::String (std::abs (held) < 0.05f ? 0.0f : held, 1),
+                               juce::dontSendNotification);
+            peakLabel.setColour (juce::Label::textColourId, held > 0.0f ? Palette::meterRed : Palette::textDim);
         }
 
         if (track != nullptr)
@@ -377,7 +398,9 @@ namespace cdaw
         r.removeFromBottom (kindH);
         auto buttons = r.removeFromBottom (buttonsH);
         r.removeFromBottom (gap);
-        dbLabel.setBounds (r.removeFromBottom (dbH));
+        auto readouts = r.removeFromBottom (dbH);
+        peakLabel.setBounds (readouts.removeFromRight (readouts.getWidth() / 2));
+        dbLabel.setBounds (readouts);
 
         juce::Array<juce::Component*> visibleButtons;
         for (auto* b : { &muteButton, &soloButton, &armButton, &monitorButton })
@@ -393,8 +416,15 @@ namespace cdaw
 
         // Pan, then the fader and meter take all the remaining height.
         pan.setBounds (r.removeFromTop (panH).withSizeKeepingCentre (PanKnob::widthForHeight (panH), panH));
-        meter->setBounds (r.removeFromRight (12).reduced (0, 4));
+        auto meterColumn = r.removeFromRight (12);
         fader.setBounds (r);
+
+        // The meter spans the fader's travel (from +6 dB to silence), so its marks sit level with
+        // the fader's scale; the clip LED goes above that.
+        const int scaleTop = fader.getY() + juce::roundToInt (fader.getPositionOfValue (1.0));
+        const int scaleBottom = fader.getY() + juce::roundToInt (fader.getPositionOfValue (0.0));
+        const int led = (int) LevelMeter::clipLedHeight;
+        meter->setBounds (meterColumn.getX(), scaleTop - led, meterColumn.getWidth(), juce::jmax (led, scaleBottom - scaleTop + led));
     }
 
     void ChannelStrip::mouseDown (const juce::MouseEvent& e)

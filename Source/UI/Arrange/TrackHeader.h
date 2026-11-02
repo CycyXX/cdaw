@@ -58,7 +58,9 @@ namespace cdaw
         ForwardsRightClick<HeaderToggle> muteButton { "M", juce::Colour (0xfff2b134), "Mute" },
                                          soloButton { "S", juce::Colour (0xff3ccf6e), "Solo" },
                                          armButton { "R", juce::Colour (0xffe5383b), "Record enable" },
-                                         monitorButton { "I", juce::Colour (0xff4fa3ff), "Input monitoring: Auto (follows record enable) / On / Off" };
+                                         monitorButton { "I", juce::Colour (0xff4fa3ff), "Input monitoring: Auto (follows record enable) / On / Off" },
+                                         takesButton { "T", juce::Colour (0xffb78cff), "Show / hide this track's take lanes" },
+                                         groupButton { "G", juce::Colour (0xff4fd1c5), "Group editing: edit the tracks in this folder as one. Clips lined up across them select, move, trim, split and comp together" };
         ForwardsRightClick<juce::TextButton> inputButton, collapseButton;
         ForwardsRightClick<PanKnob> panSlider;
         ForwardsRightClick<LevelMeter> meter;
@@ -66,6 +68,7 @@ namespace cdaw
         bool resizing = false;
         int resizeStartHeight = 0;
         bool updatingSliders = false;
+        bool inEditGroup = false;
         juce::String kindText;
     };
 }

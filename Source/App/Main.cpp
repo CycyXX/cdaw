@@ -4,6 +4,7 @@
 #include "CrashHandler.h"
 #include "FileAssociation.h"
 #include "DebugProfiler.h"
+#include "HangWatchdog.h"
 #include "MainWindow.h"
 #include "MainComponent.h"
 #include "../Engine/AudioDeviceSetup.h"
@@ -41,23 +42,48 @@ namespace cdaw
 
             Logging::init();
             CrashHandler::install();
-            const bool previousSessionCrashed = CrashHandler::beginSession();
+            watchdog = std::make_unique<HangWatchdog>();
+            previousSessionCrashed = CrashHandler::beginSession();
             juce::Logger::writeToLog ("Starting CDAW " + getApplicationVersion() + "  args: " + commandLine);
 
-            auto splash = std::make_unique<StartupSplash> (getApplicationVersion());
+            splash = std::make_unique<StartupSplash> (getApplicationVersion());
 
-            splash->setStep ("Starting the audio engine", 0.05);
+            step ("Starting the audio engine", 0.05);
             context = std::make_unique<AppContext>();
 
-            splash->setStep ("Opening the audio device", 0.30);
-            auto status = AudioDeviceSetup::ensureAsioDefault (context->engine(), context->settings);
+            step ("Opening the audio device", 0.30);
+            deviceStatus = AudioDeviceSetup::ensureAsioDefault (context->engine(), context->settings);
             context->deviceTracker = AudioDeviceSetup::trackPreferredDevice (context->engine(), context->settings);
+            context->deviceMonitor = std::make_unique<AudioDeviceMonitor> (context->engine(), context->settings, [] (const juce::String& m)
+            {
+                if (AppContext::exists() && AppContext::get().postStatus)
+                    AppContext::get().postStatus (m);
+            });
 
-            splash->setStep ("Scanning audio and MIDI devices", 0.50);
+            step ("Scanning audio and MIDI devices", 0.50);
             settleDevices();
 
-            splash->setStep ("Building the main window", 0.62);
+            step ("Building the main window", 0.62);
             context->mainWindow = std::make_unique<MainWindow>();
+
+            // The project (and its plugins) loads once the message loop runs: plugins can show
+            // dialogs or wait for messages while they load, which stalls before the loop has started.
+            juce::MessageManager::callAsync ([this, commandLine] { finishStartup (commandLine); });
+        }
+
+        void step (const juce::String& what, double progress)
+        {
+            HangWatchdog::setActivity ("Startup: " + what);
+
+            if (splash != nullptr)
+                splash->setStep (what, progress);
+        }
+
+        void finishStartup (const juce::String& commandLine)
+        {
+            if (context == nullptr || context->mainWindow == nullptr)
+                return;
+
             auto& main = context->mainWindow->getMainComponent();
 
             // Open the file given on the command line, else the last project, else a fresh one.
@@ -66,17 +92,17 @@ namespace cdaw
 
             if (commandLine.isNotEmpty() && ProjectSession::isProjectFile (argFile) && argFile.existsAsFile())
             {
-                splash->setStep ("Opening " + argFile.getFileNameWithoutExtension() + " and loading its plugins", 0.70);
+                step ("Opening " + argFile.getFileNameWithoutExtension() + " and loading its plugins", 0.70);
                 main.openProjectChecked (argFile);
             }
             else if (last.existsAsFile() && (context->settings.getBool (SettingKeys::reopenLastProject, true) || previousSessionCrashed))
             {
-                splash->setStep ("Opening " + last.getFileNameWithoutExtension() + " and loading its plugins", 0.70);
+                step ("Opening " + last.getFileNameWithoutExtension() + " and loading its plugins", 0.70);
                 main.openProjectChecked (last);
             }
             else
             {
-                splash->setStep ("Creating a new project", 0.70);
+                step ("Creating a new project", 0.70);
                 auto folder = context->settings.getProjectsFolder();
                 folder.createDirectory();
                 main.openProject (ProjectSession::createProjectFolder (folder, "Untitled"));
@@ -87,8 +113,9 @@ namespace cdaw
 
             FileAssociation::registerIfNeeded();
 
-            splash->setStep ("Ready", 1.0);
-            context->mainWindow->setVisible (true);
+            step ("Ready", 1.0);
+            HangWatchdog::setActivity ({});
+            context->mainWindow->showWindow();
 
             // Developer override for measurements: CDAW_DEBUG_RENDERER=<index> (0 = software, 1 = Direct2D).
             if (auto r = juce::SystemStats::getEnvironmentVariable ("CDAW_DEBUG_RENDERER", {}); r.isNotEmpty())
@@ -102,7 +129,7 @@ namespace cdaw
             splash.reset();
 
             if (context->postStatus)
-                context->postStatus (status);
+                context->postStatus (deviceStatus);
 
             context->mainWindow->getMainComponent().checkProjectHealth();
 
@@ -131,6 +158,8 @@ namespace cdaw
                 context.reset();
             }
 
+            splash.reset();
+            watchdog.reset();
             CrashHandler::endSession();
             juce::Logger::writeToLog ("CDAW shut down cleanly");
             Logging::shutdown();
@@ -174,6 +203,8 @@ namespace cdaw
 
         /** Developer aids, only active when the environment variables are set:
             CDAW_DEBUG_IMPORT=<file>  imports the file at bar 1 the same way a drag-and-drop does.
+            CDAW_DEBUG_CUBASE=<file.cpr>  imports the Cubase project as a new project, as File > Import Cubase Project does
+                                      (CDAW_DEBUG_CUBASE_SIMILAR=1: matching similar plugins too).
             CDAW_DEBUG_AUTOPLAY=1     presses play 0.5 s after start and logs the transport state for 6 s.
             CDAW_DEBUG_PLAYAT=<s>     with AUTOPLAY: starts playing from that position (seconds).
             CDAW_DEBUG_SPECTRUM=1     opens the mixer with the spectrum analyser.
@@ -225,6 +256,16 @@ namespace cdaw
                     if (auto& s = AppContext::get().session; s != nullptr && s->isValid())
                         if (! (bool) s->getViewState().state.getProperty (ViewIDs::showSpectrum, false))
                             AppContext::get().commandManager.invokeDirectly (CommandIDs::toggleSpectrum, false);
+                });
+
+            // CDAW_DEBUG_CUBASE=<file.cpr>: imports it as File > Import Cubase Project does (a new project, audio copied);
+            // CDAW_DEBUG_CUBASE_SIMILAR=1 also matches the plugins that only sound similar.
+            if (auto cpr = juce::SystemStats::getEnvironmentVariable ("CDAW_DEBUG_CUBASE", {}); cpr.isNotEmpty())
+                juce::Timer::callAfterDelay (1500, [this, cpr]
+                {
+                    const bool similar = juce::SystemStats::getEnvironmentVariable ("CDAW_DEBUG_CUBASE_SIMILAR", {}) == "1";
+                    if (context != nullptr && context->mainWindow != nullptr)
+                        context->mainWindow->getMainComponent().importCubaseProject (juce::File (cpr), similar);
                 });
 
             auto importPath = juce::SystemStats::getEnvironmentVariable ("CDAW_DEBUG_IMPORT", {});
@@ -462,8 +503,11 @@ namespace cdaw
             }
         }
 
+        std::unique_ptr<HangWatchdog> watchdog;
+        std::unique_ptr<StartupSplash> splash;      // until the startup project is open
         std::unique_ptr<AppContext> context;
-        bool isScannerChild = false;
+        juce::String deviceStatus;
+        bool isScannerChild = false, previousSessionCrashed = false;
     };
 }
 

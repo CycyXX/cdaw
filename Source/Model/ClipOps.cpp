@@ -1,6 +1,7 @@
 #include "ClipOps.h"
 #include <map>
 #include <unordered_set>
+#include "GroupEdit.h"
 #include "ProjectSession.h"
 #include "TrackOps.h"
 
@@ -21,7 +22,9 @@ namespace cdaw::ClipOps
     using Progress = std::function<bool (double fraction)>;   // return false to cancel
 
     /** MP3 and OGG can't be read randomly, so the engine would build a hidden proxy file in the
-        background and stay silent until it's done. Decode them to a 24-bit WAV at import instead. */
+        background and stay silent until it's done. Decode them to a WAV at import instead. It is a
+        32-bit float file: decoders overshoot full scale on loud masters, and an integer WAV
+        would clip those peaks for good. */
     static juce::File decodeToWav (ProjectSession& session, te::Engine& engine, const juce::File& file, const Progress& progress)
     {
         auto dest = session.getAudioFolder().getChildFile ("Imported");
@@ -37,7 +40,7 @@ namespace cdaw::ClipOps
         if (out == nullptr)
             return {};
 
-        std::unique_ptr<juce::AudioFormatWriter> writer (wav.createWriterFor (out.get(), reader->sampleRate, reader->numChannels, 24, {}, 0));
+        std::unique_ptr<juce::AudioFormatWriter> writer (wav.createWriterFor (out.get(), reader->sampleRate, reader->numChannels, 32, {}, 0));
         if (writer == nullptr)
             return {};
 
@@ -426,7 +429,7 @@ namespace cdaw::ClipOps
     {
         te::SelectableList toSplit;
 
-        for (auto c : getSelectedClips (sm))
+        for (auto c : GroupEdit::withLinkedClips (getSelectedClips (sm)))
             toSplit.add (c);
 
         if (toSplit.isEmpty())
@@ -557,31 +560,7 @@ namespace cdaw::ClipOps
         auto byStart = [] (te::Clip* a, te::Clip* b) { return a->getPosition().getStart() < b->getPosition().getStart(); };
         int made = 0;
 
-        // One clip: crossfade it with whatever touches it on its track.
-        if (clips.size() == 1)
-        {
-            auto* clip = dynamic_cast<te::AudioClipBase*> (clips.getFirst());
-            auto* track = clips.getFirst()->getClipTrack();
-
-            if (clip == nullptr || track == nullptr)
-                return 0;
-
-            juce::ReferenceCountedArray<te::Clip> neighbours;
-            for (auto c : track->getClips())
-                neighbours.add (c);
-
-            for (auto c : neighbours)
-                if (auto other = dynamic_cast<te::AudioClipBase*> (c); other != nullptr && other != clip)
-                {
-                    auto [left, right] = byStart (other, clip) ? std::pair { other, clip } : std::pair { clip, other };
-                    if (createCrossfade (*left, *right, length))
-                        ++made;
-                }
-
-            return made;
-        }
-
-        // Several: each touching pair on the same track.
+        // Per track, as group editing selects one clip on each of many.
         std::map<te::ClipTrack*, juce::Array<te::AudioClipBase*>> perTrack;
 
         for (auto c : clips)
@@ -591,6 +570,27 @@ namespace cdaw::ClipOps
 
         for (auto& [track, list] : perTrack)
         {
+            // One clip: crossfade it with whatever touches it on its track.
+            if (list.size() == 1)
+            {
+                auto* clip = list.getFirst();
+                juce::ReferenceCountedArray<te::Clip> neighbours;
+
+                for (auto c : track->getClips())
+                    neighbours.add (c);
+
+                for (auto c : neighbours)
+                    if (auto other = dynamic_cast<te::AudioClipBase*> (c); other != nullptr && other != clip)
+                    {
+                        auto [left, right] = byStart (other, clip) ? std::pair { other, clip } : std::pair { clip, other };
+                        if (createCrossfade (*left, *right, length))
+                            ++made;
+                    }
+
+                continue;
+            }
+
+            // Several: each touching pair.
             std::sort (list.begin(), list.end(), [&] (te::AudioClipBase* a, te::AudioClipBase* b) { return byStart (a, b); });
 
             for (int i = 0; i + 1 < list.size(); ++i)

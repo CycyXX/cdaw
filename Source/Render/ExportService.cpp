@@ -44,6 +44,9 @@ namespace cdaw::ExportService
                 return loop;
         }
 
+        if (o.range == Range::custom)
+            return o.customRange;       // empty when nothing was chosen: nothing to export
+
         return { te::TimePosition(), te::TimePosition() + edit.getLength() };
     }
 
@@ -90,7 +93,28 @@ namespace cdaw::ExportService
         }
 
         if (! tracks.isEmpty())
+        {
             p.tracksToDo = te::toBitSet (tracks);
+
+            // What the stem needs without being part of it: the tracks sending to an FX return, the
+            // source of a sidechain. They play through the render unheard (Job mutes them while it
+            // runs). A track muted in the song stays out, as it does in the mix.
+            juce::Array<te::EditItemID> ids;
+
+            for (auto* t : tracks)
+                ids.add (t->itemID);
+
+            auto allTracks = te::getAllTracks (edit);
+
+            for (auto id : te::findStemSourceTracks (edit, ids))
+            {
+                if (auto* source = te::findTrackForID (edit, id); source != nullptr && ! source->isMuted (true))
+                {
+                    p.tracksToDo.setBit (allTracks.indexOf (source));
+                    p.tracksToProcessWhileMuted.add (id);
+                }
+            }
+        }
 
         auto meta = edit.getEditMetadata();
         if (meta.title.isNotEmpty())  p.metadata.set ("title", meta.title);
@@ -141,14 +165,44 @@ namespace cdaw::ExportService
 
         for (auto mc : toExport)
         {
-            // Beats are quarter notes here (lengthOfOneBeatDependsOnTimeSignature aside, 4/4 material is the norm).
+            if (mc->isMuted())
+                continue;
+
+            // Beats are quarter notes here (lengthOfOneBeatDependsOnTimeSignature aside, 4/4 material is
+            // the norm), counted from the clip's start. The list holds more than the clip plays (a take
+            // in a comp holds the whole pass): what's outside the clip stays out, what overlaps its
+            // edges is cut there, as it sounds.
             auto seq = mc->getSequence().exportToPlaybackMidiSequence (*mc, te::MidiList::TimeBase::beats, false);
+            seq.updateMatchedPairs();
+
+            const auto clipStart = mc->getStartBeat().inBeats();
+            const auto clipLength = mc->getLengthInBeats().inBeats();
+            auto& out = perTrack[mc->getTrack()];
+
+            auto add = [&] (juce::MidiMessage msg, double beat)
+            {
+                msg.setTimeStamp ((clipStart + beat) * ppq);
+                out.addEvent (msg);
+            };
 
             for (auto* ev : seq)
             {
-                auto msg = ev->message;
-                msg.setTimeStamp (msg.getTimeStamp() * ppq);
-                perTrack[mc->getTrack()].addEvent (msg);
+                const auto time = ev->message.getTimeStamp();
+
+                if (ev->message.isNoteOn())
+                {
+                    const auto end = ev->noteOffObject != nullptr ? ev->noteOffObject->message.getTimeStamp() : clipLength;
+
+                    if (end > 0.0 && time < clipLength)
+                    {
+                        add (ev->message, juce::jmax (0.0, time));
+                        add (juce::MidiMessage::noteOff (ev->message.getChannel(), ev->message.getNoteNumber()), juce::jmin (end, clipLength));
+                    }
+                }
+                else if (! ev->message.isNoteOff() && time < clipLength)
+                {
+                    add (ev->message, juce::jmax (0.0, time));
+                }
             }
         }
 
@@ -182,6 +236,7 @@ namespace cdaw::ExportService
         *alive = false;
         stopTimer();
         handle.reset();
+        sourceMuter.reset();
     }
 
     juce::String Job::getCurrentDescription() const
@@ -215,6 +270,9 @@ namespace cdaw::ExportService
         item.params.destFile.getParentDirectory().createDirectory();
         item.params.destFile.deleteFile();
 
+        if (! item.params.tracksToProcessWhileMuted.isEmpty())
+            sourceMuter = std::make_unique<te::ScopedTrackMuter> (*item.params.edit, item.params.tracksToProcessWhileMuted);
+
         std::weak_ptr<bool> weakAlive = alive;
 
         handle = te::EditRenderer::render (item.params, [this, weakAlive] (tl::expected<juce::File, std::string> result)
@@ -240,6 +298,7 @@ namespace cdaw::ExportService
                 if (auto a = weakAlive.lock(); a != nullptr && *a)
                 {
                     handle.reset();
+                    sourceMuter.reset();
                     startNext();
                 }
             });

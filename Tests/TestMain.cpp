@@ -24,7 +24,17 @@ int main (int argc, char* argv[])
 
         ConsoleRunner runner;
         runner.setAssertOnFailure (false);
-        runner.runTestsInCategory (argc > 1 ? juce::String (argv[1]) : juce::String ("CDAW"));
+        // The argument is a category, or the name of a single test.
+        const auto which = argc > 1 ? juce::String (argv[1]) : juce::String ("CDAW");
+        juce::Array<juce::UnitTest*> named;
+        for (auto* test : juce::UnitTest::getAllTests())
+            if (test->getName() == which)
+                named.add (test);
+
+        if (named.isEmpty())
+            runner.runTestsInCategory (which);
+        else
+            runner.runTests (named);
 
         results = runner.getNumResults();
         for (int i = 0; i < results; ++i)

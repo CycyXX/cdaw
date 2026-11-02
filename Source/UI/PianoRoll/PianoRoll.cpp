@@ -92,6 +92,13 @@ namespace cdaw
                     g.setColour (black ? juce::Colour (0xff15171a) : juce::Colour (0xffd8dbe0));
                     g.fillRect (black ? r.withTrimmedRight ((float) getWidth() * 0.35f) : r);
 
+                    // In the key: a bar at the edge next to the grid (brighter for the root).
+                    if (owner.key.isSet() && owner.key.contains (note))
+                    {
+                        g.setColour (owner.key.isRoot (note) ? Palette::accent : Palette::accent.withAlpha (0.45f));
+                        g.fillRect (r.withLeft ((float) getWidth() - 5.0f).reduced (0.0f, 1.0f));
+                    }
+
                     if (note % 12 == 0 && h >= 8.0f)
                     {
                         g.setColour (juce::Colours::black);
@@ -140,11 +147,24 @@ namespace cdaw
                     continue;
 
                 auto note = owner.rowToNote (row);
+                const bool inKey = owner.isDrumMode() || owner.key.contains (note);   // everything, without a key
                 const bool shade = owner.isDrumMode() ? (row % 2 == 1) : isBlackKey (note);
 
-                if (shade)
+                if (! inKey)
+                {
+                    // With a key, it's the notes outside it that are shaded (darker than the black keys were).
+                    g.setColour (Palette::laneAlternate.darker (0.35f));
+                    g.fillRect (0.0f, y, (float) getWidth(), L.rowHeight);
+                }
+                else if (shade && ! owner.key.isSet())
                 {
                     g.setColour (Palette::laneAlternate);
+                    g.fillRect (0.0f, y, (float) getWidth(), L.rowHeight);
+                }
+
+                if (! owner.isDrumMode() && owner.key.isRoot (note))
+                {
+                    g.setColour (Palette::accent.withAlpha (0.07f));
                     g.fillRect (0.0f, y, (float) getWidth(), L.rowHeight);
                 }
 
@@ -332,6 +352,9 @@ namespace cdaw
                 auto startBeat = std::floor (owner.xToEditBeat (pos.x) / gridBeats) * gridBeats;
                 auto pitch = owner.rowToNote (row);
 
+                if (owner.isSnappingToKey())
+                    pitch = KeyScale::snapToKey (owner.key, pitch);
+
                 um.beginNewTransaction ("Add note");
                 auto contentStart = owner.editBeatToContentBeat (startBeat);
                 auto contentEnd = owner.editBeatToContentBeat (startBeat + gridBeats);
@@ -418,6 +441,10 @@ namespace cdaw
                     else
                     {
                         newPitch = juce::jlimit (0, 127, o.pitch - deltaRows);
+
+                        // Dragged up or down: land in the key, leaning the way it's going.
+                        if (deltaRows != 0 && owner.isSnappingToKey())
+                            newPitch = KeyScale::snapToKey (owner.key, newPitch, deltaRows < 0 ? 1 : -1);
                     }
 
                     if (newPitch != o.note->getNoteNumber())
@@ -614,6 +641,19 @@ namespace cdaw
         };
         addAndMakeVisible (drumModeButton);
 
+        keyButton.setTooltip ("The song's key and scale (also in the transport bar): notes outside it are shaded");
+        keyButton.onClick = [this]
+        {
+            KeyScale::createMenu (edit).showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&keyButton));
+        };
+        addAndMakeVisible (keyButton);
+
+        keySnapButton.setTooltip ("Keep notes in the key: drawn and dragged notes land on it, Up / Down move by scale steps");
+        keySnapButton.setClickingTogglesState (true);
+        keySnapButton.setColour (juce::TextButton::buttonOnColourId, Palette::accentDim);
+        keySnapButton.onClick = [this] { KeyScale::setSnapEnabled (edit, keySnapButton.getToggleState()); };
+        addAndMakeVisible (keySnapButton);
+
         vScroll.setAutoHide (false);
         vScroll.addListener (this);
         addAndMakeVisible (vScroll);
@@ -625,7 +665,23 @@ namespace cdaw
 
         // Show the clip from its start.
         layout.scrollBeat = juce::jmax (0.0, edit.tempoSequence.toBeats (clip->getPosition().getStart()).inBeats() - 0.5);
+        key = KeyScale::getKey (edit);
+        updateKeyControls();
         startTimerHz (30);
+    }
+
+    bool PianoRoll::isSnappingToKey() const
+    {
+        return key.isSet() && ! isDrumMode() && keySnapButton.getToggleState();
+    }
+
+    void PianoRoll::updateKeyControls()
+    {
+        keyButton.setButtonText ("Key: " + key.getName());
+        keySnapButton.setToggleState (KeyScale::isSnapEnabled (edit), juce::dontSendNotification);
+        keySnapButton.setEnabled (key.isSet());
+        keyButton.setVisible (! isDrumMode());
+        keySnapButton.setVisible (! isDrumMode());
     }
 
     PianoRoll::~PianoRoll()
@@ -640,6 +696,7 @@ namespace cdaw
         rebuildRows();
         centreOnNotes();
         drumModeButton.setButtonText (isDrumMode() ? "Drum map: " + drumMap->name : juce::String ("Piano roll"));
+        updateKeyControls();
         resized();
         repaint();
     }
@@ -763,9 +820,27 @@ namespace cdaw
 
     void PianoRoll::timerCallback()
     {
+        // The clip was deleted, or recorded over, or rejoined with its neighbour after a comp.
+        if (! clip->state.getParent().isValid())
+        {
+            if (onClipRemoved)
+                onClipRemoved();
+
+            return;
+        }
+
         // Hidden editor page: nothing to move (a full repaint happens when it's shown).
         if (! isShowing())
             return;
+
+        // The key is changed from menus here and in the transport bar (and by undo).
+        if (auto k = KeyScale::getKey (edit); k.root != key.root || k.scale != key.scale)
+        {
+            key = k;
+            updateKeyControls();
+            keys->repaint();
+            grid->repaint();
+        }
 
         auto beat = edit.tempoSequence.toBeats (edit.getTransport().getPosition()).inBeats();
 
@@ -847,6 +922,15 @@ namespace cdaw
         drumModeButton.setBounds (toolbar.removeFromRight (180));
         toolbar.removeFromRight (6);
         quantizeButton.setBounds (toolbar.removeFromRight (80));
+
+        if (! isDrumMode())
+        {
+            toolbar.removeFromRight (12);
+            keySnapButton.setBounds (toolbar.removeFromRight (96));
+            toolbar.removeFromRight (4);
+            keyButton.setBounds (toolbar.removeFromRight (170));
+        }
+
         titleLabel.setBounds (toolbar);
 
         const int keysWidth = isDrumMode() ? 170 : 70;
@@ -954,6 +1038,10 @@ namespace cdaw
                 auto row = noteToRow (n->getNoteNumber()) - (semitones > 0 ? 1 : -1);
                 if (juce::isPositiveAndBelow (row, getNumRows()))
                     n->setNoteNumber (rowToNote (row), &um);
+            }
+            else if (isSnappingToKey() && std::abs (semitones) == 1)
+            {
+                n->setNoteNumber (KeyScale::stepInKey (key, n->getNoteNumber(), semitones), &um);   // up / down a scale step
             }
             else
             {

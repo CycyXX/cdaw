@@ -66,7 +66,7 @@ namespace cdaw
         inline constexpr const char* backupsToKeep         = "backupsToKeep";
         inline constexpr const char* recordBitDepth        = "recordBitDepth";
         inline constexpr const char* recordOffsetMs        = "recordOffsetMs";
-        inline constexpr const char* midiRecordMode        = "midiRecordMode";     // 0 overdub, 1 replace, 2 takes
+        inline constexpr const char* midiRecordMode        = "midiOverlapMode";    // 0 overdub, 1 replace, 2 takes (the default; earlier builds' overdub default isn't carried over)
         inline constexpr const char* countInBars           = "countInBars";        // 0, 1, 2
         inline constexpr const char* clickVolumeDb         = "clickVolumeDb";
         inline constexpr const char* middleCOctave         = "middleCOctave";

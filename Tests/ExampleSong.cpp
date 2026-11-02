@@ -1,10 +1,12 @@
-// Builds the example project "Night Drive": a one-minute synth-pop song made only from what ships
-// with CDAW (4OSC synths, synthesised drum stems, the built-in effects).
-// Runs only when CDAW_MAKE_EXAMPLE is set to the folder the project should go in, e.g.
+// Builds the example projects "Night Drive", a one-minute synth-pop song made only from what ships
+// with CDAW (4OSC synths, synthesised drum stems, the built-in effects), and "Night Drive v2", the
+// same song with its pad on C-Synth and its lead on C-Lead.
+// Runs only when CDAW_MAKE_EXAMPLE is set to the folder the projects should go in, e.g.
 //   set CDAW_MAKE_EXAMPLE=%USERPROFILE%\Documents\CDAW Projects
-// It balances the mix by rendering each part on its own, then renders a preview into Bounces.
+// A project whose folder is there already is left as it is. Each balances its mix by rendering
+// each part on its own, then renders a preview into Bounces.
 
-#include "TestEngine.h"
+#include "ExampleParts.h"
 #include "Model/ArrangerOps.h"
 #include "Model/MixerOps.h"
 #include "Model/ProjectSession.h"
@@ -12,10 +14,16 @@
 #include "Plugins/BuiltInPlugins.h"
 #include "Plugins/CompressorPlugin.h"
 #include "Plugins/EqPlugin.h"
+#include "Plugins/LeadPlugin.h"
 #include "Plugins/ReverbPlugin.h"
+#include "Plugins/SynthPlugin.h"
+#include "Shared/Lead/LeadPresets.h"
+#include "Shared/Synth/SynthPresets.h"
 
 namespace cdaw::test
 {
+    using namespace example;
+
     namespace
     {
         constexpr double bpm = 96.0, sampleRate = 48000.0;
@@ -25,97 +33,6 @@ namespace cdaw::test
         constexpr int introStart = 0, verseStart = 4, chorusStart = 12, outroStart = 20, songBars = 24, tailBars = 2;
 
         double barsToSeconds (double bars)     { return bars * beatsPerBar * 60.0 / bpm; }
-
-        //==============================================================================
-        // Drum synthesis: each hit is added into a stereo buffer at a time in beats.
-
-        struct DrumKit
-        {
-            explicit DrumKit (int numSamples) : kick (2, numSamples), snare (2, numSamples), hats (2, numSamples)
-            {
-                for (auto* b : { &kick, &snare, &hats })
-                    b->clear();
-            }
-
-            static int at (double beat)     { return (int) std::round (beat * 60.0 / bpm * sampleRate); }
-
-            void addKick (double beat, float gain)
-            {
-                // A sine dropping from 150 Hz to 48 Hz, with a short click on top.
-                const int start = at (beat), length = (int) (0.45 * sampleRate);
-                double phase = 0.0;
-                for (int i = 0; i < length && start + i < kick.getNumSamples(); ++i)
-                {
-                    const double t = i / sampleRate;
-                    const double freq = 48.0 + 102.0 * std::exp (-t * 28.0);
-                    phase += juce::MathConstants<double>::twoPi * freq / sampleRate;
-                    const double body = std::sin (phase) * std::exp (-t * 7.5);
-                    const double click = (i < 96 ? random.nextFloat() * 2.0 - 1.0 : 0.0) * 0.25 * std::exp (-t * 400.0);
-                    const auto v = (float) ((body + click) * gain);
-                    kick.addSample (0, start + i, v);
-                    kick.addSample (1, start + i, v);
-                }
-            }
-
-            void addSnare (double beat, float gain, float pan = 0.0f)
-            {
-                // A 190 Hz tone and band-limited noise, decaying fast; the noise slightly wider.
-                const int start = at (beat), length = (int) (0.32 * sampleRate);
-                float lowL = 0, lowR = 0, prevL = 0, prevR = 0;
-                for (int i = 0; i < length && start + i < snare.getNumSamples(); ++i)
-                {
-                    const double t = i / sampleRate;
-                    const double tone = std::sin (juce::MathConstants<double>::twoPi * 190.0 * t) * std::exp (-t * 30.0) * 0.6;
-                    auto noise = [&] (float& low, float& prev)
-                    {
-                        const float n = random.nextFloat() * 2.0f - 1.0f;
-                        low += 0.35f * (n - low);                   // gentle low-pass
-                        const float hp = low - prev;                // then remove the lows
-                        prev = low;
-                        return hp * 2.2f * (float) std::exp (-t * 14.0);
-                    };
-                    const float nl = noise (lowL, prevL), nr = noise (lowR, prevR);
-                    snare.addSample (0, start + i, (float) (tone + nl) * gain * (1.0f - pan));
-                    snare.addSample (1, start + i, (float) (tone + nr) * gain * (1.0f + pan));
-                }
-            }
-
-            void addHat (double beat, float gain, bool open, float pan)
-            {
-                const int start = at (beat), length = (int) ((open ? 0.35 : 0.06) * sampleRate);
-                const double decay = open ? 9.0 : 70.0;
-                float prev = 0;
-                for (int i = 0; i < length && start + i < hats.getNumSamples(); ++i)
-                {
-                    const double t = i / sampleRate;
-                    const float n = random.nextFloat() * 2.0f - 1.0f;
-                    const float hp = n - prev * 0.92f;              // bright: mostly the top
-                    prev = n;
-                    const float v = hp * gain * 0.5f * (float) std::exp (-t * decay);
-                    hats.addSample (0, start + i, v * (1.0f - pan));
-                    hats.addSample (1, start + i, v * (1.0f + pan));
-                }
-            }
-
-            juce::AudioBuffer<float> kick, snare, hats;
-            juce::Random random { 2026 };
-        };
-
-        void writeWav (juce::AudioBuffer<float>& buffer, const juce::File& file)
-        {
-            // Each stem peaks at -1 dBFS; the faders do the balancing.
-            if (auto peak = buffer.getMagnitude (0, buffer.getNumSamples()); peak > 0.0f)
-                buffer.applyGain (juce::Decibels::decibelsToGain (-1.0f) / peak);
-
-            file.deleteFile();
-            juce::WavAudioFormat wav;
-            if (auto out = std::unique_ptr<juce::OutputStream> (file.createOutputStream()))
-                if (auto writer = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (out.get(), sampleRate, (unsigned int) buffer.getNumChannels(), 24, {}, 0)))
-                {
-                    out.release();
-                    writer->writeFromAudioSampleBuffer (buffer, 0, buffer.getNumSamples());
-                }
-        }
 
         void writeDrums (DrumKit& kit)
         {
@@ -271,36 +188,6 @@ namespace cdaw::test
         }
 
         //==============================================================================
-        te::FourOscPlugin* addSynth (te::AudioTrack& track)
-        {
-            for (auto p : track.pluginList.getPlugins())
-                if (auto synth = dynamic_cast<te::FourOscPlugin*> (p))
-                    return synth;
-            return nullptr;
-        }
-
-        void set (te::AutomatableParameter::Ptr p, float v)     { p->setParameter (v, juce::sendNotification); }
-
-        void soundBass (te::FourOscPlugin& s)
-        {
-            s.oscParams[0]->waveShapeValue = 3;                 // saw
-            s.oscParams[1]->waveShapeValue = 2;                 // square, an octave down
-            set (s.oscParams[1]->tune, -12.0f);
-            set (s.oscParams[1]->level, -6.0f);
-            s.filterTypeValue = 1;                              // low-pass
-            set (s.filterFreq, 52.0f);
-            set (s.filterResonance, 18.0f);
-            set (s.filterAmount, 0.35f);
-            set (s.filterAttack, 0.0f);
-            set (s.filterDecay, 0.22f);
-            set (s.filterSustain, 20.0f);
-            set (s.ampAttack, 0.003f);
-            set (s.ampDecay, 0.3f);
-            set (s.ampSustain, 75.0f);
-            set (s.ampRelease, 0.07f);
-            set (s.masterLevel, -6.0f);
-        }
-
         void soundPad (te::FourOscPlugin& s)
         {
             s.oscParams[0]->waveShapeValue = 3;
@@ -365,54 +252,16 @@ namespace cdaw::test
             s.chorusOnValue = true;
             set (s.chorusMix, 0.15f);
 
+            // The echoes bounce between the sides, 9 dB quieter each time: crossfeed only. (4OSC's
+            // loop adds feedback and crossfeed, so -9 and -4 dB together kept a centred sound
+            // repeating at 0.99 for minutes.)
             s.delayOnValue = true;
             s.delayValue = 0.75f;                               // a dotted eighth (in beats)
-            set (s.delayFeedback, -9.0f);
-            set (s.delayCrossfeed, -4.0f);                      // echoes bounce between the sides
+            set (s.delayFeedback, -100.0f);
+            set (s.delayCrossfeed, -9.0f);
             set (s.delayMix, 0.28f);
 
             set (s.masterLevel, -19.0f);
-        }
-
-        /** Renders the edit (only `tracks` and their parent groups when given) at 48 kHz in 32-bit
-            float, so levels above 0 dBFS come back as they are. */
-        juce::AudioBuffer<float> render (te::Edit& edit, juce::Array<te::Track*> tracks = {})
-        {
-            for (int i = tracks.size(); --i >= 0;)
-                if (auto parent = tracks[i]->getParentFolderTrack())
-                    tracks.addIfNotAlreadyThere (parent);
-
-            juce::TemporaryFile temp (".wav");
-            te::Renderer::Parameters params (edit);
-            params.destFile = temp.getFile();
-            params.audioFormat = edit.engine.getAudioFileFormatManager().getWavFormat();
-            params.bitDepth = 32;
-            params.sampleRateForAudio = sampleRate;
-            params.time = te::TimeRange (te::TimePosition(), edit.getLength());
-            params.tracksToDo = te::toBitSet (tracks.isEmpty() ? te::getAllTracks (edit) : tracks);
-            params.useMasterPlugins = tracks.isEmpty();     // the full mix through the master chain; parts before it
-            te::Renderer::renderToFile ("Example song", params);
-
-            juce::AudioFormatManager formats;
-            formats.registerBasicFormats();
-            juce::AudioBuffer<float> buffer;
-            if (auto reader = std::unique_ptr<juce::AudioFormatReader> (formats.createReaderFor (temp.getFile())))
-            {
-                buffer.setSize ((int) reader->numChannels, (int) reader->lengthInSamples);
-                reader->read (&buffer, 0, buffer.getNumSamples(), 0, true, true);
-            }
-            return buffer;
-        }
-
-        float peakDb (const juce::AudioBuffer<float>& b)    { return juce::Decibels::gainToDecibels (b.getMagnitude (0, b.getNumSamples()), -150.0f); }
-
-        float rmsDb (const juce::AudioBuffer<float>& b, double fromSec, double toSec, double rate)
-        {
-            auto s = (int) (fromSec * rate), e = juce::jmin (b.getNumSamples(), (int) (toSec * rate));
-            float sum = 0.0f;
-            for (int ch = 0; ch < b.getNumChannels(); ++ch)
-                sum += b.getRMSLevel (ch, s, e - s);
-            return juce::Decibels::gainToDecibels (sum / (float) b.getNumChannels(), -150.0f);
         }
     }
 
@@ -423,21 +272,79 @@ namespace cdaw::test
 
         void runTest() override
         {
+            beginTest ("The example's lead: its echoes die away after the last note");
+            {
+                // A loop that adds feedback and crossfeed close to 1 keeps a centred sound repeating
+                // for minutes: it rings on whenever playback stops.
+                auto edit = te::test_utilities::createTestEdit (getEngine(), 1);
+                edit->tempoSequence.getTempo (0)->setBpm (96.0);
+                auto track = te::getAudioTracks (*edit)[0];
+                auto plugin = edit->getPluginCache().createNewPlugin (te::FourOscPlugin::xmlTypeName, {});
+                track->pluginList.insertPlugin (plugin, 0, nullptr);
+                soundLead (*dynamic_cast<te::FourOscPlugin*> (plugin.get()));
+
+                auto clip = track->insertMIDIClip ({ te::TimePosition(), te::TimePosition::fromSeconds (12.0) }, nullptr);
+                clip->getSequence().addNote (69, te::BeatPosition(), te::BeatDuration::fromBeats (1.0), 110, 0, nullptr);
+
+                auto r = te::test_utilities::renderToAudioBuffer (*edit);
+                auto rms = [&r] (double from, double to)
+                {
+                    const int s = (int) (from * r.sampleRate), n = (int) ((to - from) * r.sampleRate);
+                    return juce::Decibels::gainToDecibels (juce::jmax (r.buffer.getRMSLevel (0, s, n), r.buffer.getRMSLevel (1, s, n)), -150.0f);
+                };
+
+                const auto note = rms (0.0, 0.6), late = rms (9.0, 11.0);
+                logMessage ("Lead note " + juce::String (note, 1) + " dB RMS; 9-11 s later " + juce::String (late, 1) + " dB");
+                expectLessThan (late, note - 60.0f, "the echoes have faded out");
+            }
+
+            beginTest ("Night Drive v2's lead (C-Lead): its echoes die away after the last note");
+            {
+                auto edit = te::test_utilities::createTestEdit (getEngine(), 1);
+                edit->tempoSequence.getTempo (0)->setBpm (96.0);
+                auto track = te::getAudioTracks (*edit)[0];
+                auto plugin = edit->getPluginCache().createNewPlugin (LeadPlugin::xmlTypeName, {});
+                track->pluginList.insertPlugin (plugin, 0, nullptr);
+                soundLead (*dynamic_cast<LeadPlugin*> (plugin.get()));
+
+                auto clip = track->insertMIDIClip ({ te::TimePosition(), te::TimePosition::fromSeconds (12.0) }, nullptr);
+                clip->getSequence().addNote (69, te::BeatPosition(), te::BeatDuration::fromBeats (1.0), 110, 0, nullptr);
+
+                auto r = te::test_utilities::renderToAudioBuffer (*edit);
+                auto rms = [&r] (double from, double to)
+                {
+                    const int s = (int) (from * r.sampleRate), n = (int) ((to - from) * r.sampleRate);
+                    return juce::Decibels::gainToDecibels (juce::jmax (r.buffer.getRMSLevel (0, s, n), r.buffer.getRMSLevel (1, s, n)), -150.0f);
+                };
+
+                const auto note = rms (0.0, 0.6), late = rms (9.0, 11.0);
+                logMessage ("C-Lead note " + juce::String (note, 1) + " dB RMS; 9-11 s later " + juce::String (late, 1) + " dB");
+                expectLessThan (late, note - 60.0f, "the echoes have faded out");
+            }
+
             auto target = juce::SystemStats::getEnvironmentVariable ("CDAW_MAKE_EXAMPLE", {});
             if (target.isEmpty())
                 return;
 
-            beginTest ("Build the example project \"Night Drive\"");
+            buildSong (juce::File (target), false);
+            buildSong (juce::File (target), true);
+        }
+
+        /** Builds "Night Drive" (4OSC throughout) or "Night Drive v2" (the pad on C-Synth, the lead on C-Lead). */
+        void buildSong (const juce::File& parent, bool v2)
+        {
+            const juce::String songName = v2 ? "Night Drive v2" : "Night Drive";
+            beginTest ("Build the example project \"" + songName + "\"");
 
             auto& engine = getEngine();
-            auto parent = juce::File (target);
             parent.createDirectory();
-            auto existing = parent.getChildFile ("Night Drive");
-            expect (! existing.exists(), "won't overwrite an existing \"Night Drive\" folder");
-            if (existing.exists())
+            if (parent.getChildFile (songName).exists())
+            {
+                logMessage ("\"" + songName + "\" is there already: left as it is");
                 return;
+            }
 
-            auto editFile = ProjectSession::createProjectFolder (parent, "Night Drive");
+            auto editFile = ProjectSession::createProjectFolder (parent, songName);
             ProjectSession session (engine, editFile);
             auto& edit = session.getEdit();
             auto& ts = edit.tempoSequence;
@@ -460,7 +367,7 @@ namespace cdaw::test
 
             // Drum stems, one per drum, the length of the song plus a tail.
             const int length = (int) std::ceil (barsToSeconds (songBars + tailBars) * sampleRate);
-            DrumKit kit (length);
+            DrumKit kit (length, [] (double b) { return b * 60.0 / bpm; }, sampleRate);
             writeDrums (kit);
             auto audio = session.getAudioFolder();
             audio.createDirectory();
@@ -514,22 +421,37 @@ namespace cdaw::test
             parts["Hats"]->getVolumePlugin()->setPan (0.1f);
 
             // Synths.
-            auto addInstrument = [&] (const char* name, juce::Colour colour)
+            auto addInstrument = [&] (const char* partName, juce::Colour colour, juce::PluginDescription desc)
             {
-                auto desc = te::PluginManager::createBuiltInPluginDescription<te::FourOscPlugin> (true);
                 auto t = TrackOps::addInstrumentTrack (edit, nullptr, &desc);
-                t->setName (name);
+                t->setName (partName);
                 t->setColour (colour);
-                parts[name] = t;
+                parts[partName] = t;
                 return t;
             };
 
-            auto bass = addInstrument ("Bass", juce::Colour (0xff4fa3ff));
-            auto pad = addInstrument ("Pad", juce::Colour (0xffd77cff));
-            auto lead = addInstrument ("Lead", juce::Colour (0xfff2b134));
+            const auto fourOsc = te::PluginManager::createBuiltInPluginDescription<te::FourOscPlugin> (true);
+            auto bass = addInstrument ("Bass", juce::Colour (0xff4fa3ff), fourOsc);
+            auto pad = addInstrument ("Pad", juce::Colour (0xffd77cff), v2 ? BuiltInPlugins::getSynthDescription() : fourOsc);
+            auto lead = addInstrument ("Lead", juce::Colour (0xfff2b134), v2 ? BuiltInPlugins::getLeadDescription() : fourOsc);
             soundBass (*addSynth (*bass));
-            soundPad (*addSynth (*pad));
-            soundLead (*addSynth (*lead));
+
+            auto firstOf = [] (te::AudioTrack& t) { return t.pluginList.getPlugins().getFirst().get(); };
+            auto* padSynth = dynamic_cast<SynthPlugin*> (firstOf (*pad));
+            auto* leadSynth = dynamic_cast<LeadPlugin*> (firstOf (*lead));
+            if (v2)
+            {
+                expect (padSynth != nullptr && leadSynth != nullptr, "C-Synth and C-Lead on the pad and lead tracks");
+                if (padSynth == nullptr || leadSynth == nullptr)
+                    return;
+                soundPad (*padSynth);
+                soundLead (*leadSynth);
+            }
+            else
+            {
+                soundPad (*addSynth (*pad));
+                soundLead (*addSynth (*lead));
+            }
 
             auto addNotes = [&] (te::AudioTrack& t, const std::vector<Note>& notes, const juce::String& clipName)
             {
@@ -603,7 +525,19 @@ namespace cdaw::test
             MixerOps::addSend (*lead, reverbBus, true, -14.0f);
             lead->getVolumePlugin()->setPan (-0.1f);
 
-            // The pad's filter opens through the intro and closes again in the outro.
+            // The pad's filter opens through the intro and closes again in the outro: 4OSC's in
+            // note numbers; C-Synth's in Hz, from 26 semitones below its preset's cutoff (as 4OSC's
+            // 58 is below 84) up to it, then down a little further.
+            if (v2)
+            {
+                const float open = padSynth->getSettings().cutoff;
+                auto& curve = padSynth->parameter (SynthParameters::cutoff).getParameter().getCurve();
+                curve.addPoint (beat (0.0), open * std::pow (2.0f, -26.0f / 12.0f), 0.0f, nullptr);
+                curve.addPoint (beat (verseStart * 4.0), open, 0.0f, nullptr);
+                curve.addPoint (beat (outroStart * 4.0), open, 0.0f, nullptr);
+                curve.addPoint (beat ((songBars + 1) * 4.0), open * std::pow (2.0f, -28.0f / 12.0f), 0.0f, nullptr);
+            }
+            else
             {
                 auto& curve = addSynth (*pad)->filterFreq->getCurve();
                 curve.addPoint (beat (0.0), 58.0f, 0.0f, nullptr);
@@ -703,7 +637,7 @@ namespace cdaw::test
             session.getBouncesFolder().createDirectory();
             juce::AudioBuffer<float> out (preview);
             juce::WavAudioFormat wav;
-            auto file = session.getBouncesFolder().getChildFile ("Night Drive (preview).wav");
+            auto file = session.getBouncesFolder().getChildFile (songName + " (preview).wav");
             file.deleteFile();
             if (auto stream = std::unique_ptr<juce::OutputStream> (file.createOutputStream()))
                 if (auto writer = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (stream.get(), sampleRate, 2, 24, {}, 0)))

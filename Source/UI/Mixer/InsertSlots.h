@@ -19,6 +19,7 @@ namespace cdaw
 
         void resized() override;
         void paint (juce::Graphics&) override;
+        void paintOverChildren (juce::Graphics&) override;
         int getIdealHeight() const;
 
         /** Called when slots are added or removed (default: the parent is re-laid out). */
@@ -29,6 +30,10 @@ namespace cdaw
 
     private:
         struct Row;
+
+        /** A row being dragged to `y` (in this component), and dropped. */
+        void dragRow (Row&, float y);
+        void dropRow (Row&);
 
         void rebuild();
         void handleAsyncUpdate() override;
@@ -49,6 +54,8 @@ namespace cdaw
         juce::OwnedArray<Row> rows;
         juce::TextButton addButton { "+ Insert" };
         bool needsRebuild = false, needsRowUpdate = false;
+        Row* dragging = nullptr;
+        int dropSlot = -1;
     };
 
     /** List of a track's sends: bus, level, pre/post, remove, plus "+ Send". */

@@ -497,8 +497,9 @@ namespace cdaw
 
         if (e.y < markerZoneHeight + loopZoneHeight)
         {
-            draggingLoop = true;
-            loopDragStart = t;
+            loopDrag = loopDragAt (e.x);
+            loopDragStart = loopDrag == LoopDrag::move ? viewState.xToTime (e.x) : t;
+            loopAtDragStart = transport.getLoopRange();
         }
         else
         {
@@ -511,13 +512,41 @@ namespace cdaw
     void TimeRuler::mouseDrag (const juce::MouseEvent& e)
     {
         auto t = viewState.snap (viewState.xToTime (e.x));
+        auto& transport = edit.getTransport();
 
-        if (draggingLoop && e.getDistanceFromDragStartX() != 0)
+        if (loopDrag != LoopDrag::none && e.getDistanceFromDragStartX() != 0)
         {
-            auto a = juce::jmin (loopDragStart, t), b = juce::jmax (loopDragStart, t);
-
-            if (b > a)
-                edit.getTransport().setLoopRange ({ a, b });
+            const auto start = loopAtDragStart.getStart(), end = loopAtDragStart.getEnd();
+            switch (loopDrag)
+            {
+                case LoopDrag::start:
+                    // An edge dragged past the other one swaps them.
+                    transport.setLoopRange ({ juce::jmin (t, end), juce::jmax (t, end) });
+                    break;
+                case LoopDrag::end:
+                    transport.setLoopRange ({ juce::jmin (start, t), juce::jmax (start, t) });
+                    break;
+                case LoopDrag::move:
+                {
+                    // The same length, its start snapped, never before zero.
+                    const auto shift = viewState.xToTime (e.x) - loopDragStart;
+                    auto newStart = viewState.snap (start + shift);
+                    if (newStart < te::TimePosition())
+                        newStart = te::TimePosition();
+                    transport.setLoopRange ({ newStart, newStart + loopAtDragStart.getLength() });
+                    break;
+                }
+                case LoopDrag::create:
+                {
+                    auto a = juce::jmin (loopDragStart, t), b = juce::jmax (loopDragStart, t);
+                    if (b > a)
+                        transport.setLoopRange ({ a, b });
+                    break;
+                }
+                case LoopDrag::none:
+                default:
+                    break;
+            }
 
             repaint();
         }
@@ -530,14 +559,65 @@ namespace cdaw
 
     void TimeRuler::mouseUp (const juce::MouseEvent& e)
     {
-        if (draggingLoop && e.mouseWasDraggedSinceMouseDown())
+        if (loopDrag == LoopDrag::create && e.mouseWasDraggedSinceMouseDown())
             edit.getTransport().looping = true;
 
         if (draggingPlayhead)
             edit.getTransport().setUserDragging (false);
 
-        draggingLoop = draggingPlayhead = false;
+        loopDrag = LoopDrag::none;
+        draggingPlayhead = false;
         repaint();
+    }
+
+    TimeRuler::LoopDrag TimeRuler::loopDragAt (int x) const
+    {
+        const auto loop = edit.getTransport().getLoopRange();
+        if (loop.isEmpty())
+            return LoopDrag::create;
+
+        const auto x1 = viewState.timeToX (loop.getStart()), x2 = viewState.timeToX (loop.getEnd());
+        constexpr int grab = 5;
+        if (std::abs (x - x1) <= grab)  return LoopDrag::start;
+        if (std::abs (x - x2) <= grab)  return LoopDrag::end;
+        if (x > x1 && x < x2)           return LoopDrag::move;
+        return LoopDrag::create;
+    }
+
+    void TimeRuler::mouseMove (const juce::MouseEvent& e)
+    {
+        auto cursor = juce::MouseCursor::IBeamCursor;
+        if (e.y >= markerZoneHeight && e.y < markerZoneHeight + loopZoneHeight)
+        {
+            switch (loopDragAt (e.x))
+            {
+                case LoopDrag::start:
+                case LoopDrag::end:     cursor = juce::MouseCursor::LeftRightResizeCursor; break;
+                case LoopDrag::move:    cursor = juce::MouseCursor::DraggingHandCursor; break;
+                case LoopDrag::create:
+                case LoopDrag::none:
+                default:                cursor = juce::MouseCursor::CrosshairCursor; break;
+            }
+        }
+        setMouseCursor (cursor);
+    }
+
+    juce::String TimeRuler::getTooltip()
+    {
+        const auto at = getMouseXYRelative();
+        if (at.y >= markerZoneHeight && at.y < markerZoneHeight + loopZoneHeight)
+        {
+            switch (loopDragAt (at.x))
+            {
+                case LoopDrag::start:
+                case LoopDrag::end:     return "Drag to move this end of the loop range";
+                case LoopDrag::move:    return "Drag to move the loop range; double-click to switch looping on or off";
+                case LoopDrag::create:
+                case LoopDrag::none:
+                default:                return "Drag to set the loop (and export) range; double-click to switch looping on or off";
+            }
+        }
+        return {};
     }
 
     void TimeRuler::mouseDoubleClick (const juce::MouseEvent& e)

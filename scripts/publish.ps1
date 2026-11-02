@@ -8,14 +8,23 @@ if (Test-Path "$built\CDAW.pdb") { Copy-Item "$built\CDAW.pdb" $dist -Force }
 Copy-Item "$built\DrumMaps" $dist -Recurse -Force
 Write-Host "Published to $dist"
 
-# VST3 plugins (C-Verb and C-Multicomp): into dist\VST3, then installed in "Common Files\VST3\CDAW" where
+# VST3 plugins (C-Verb, C-Multicomp, C-Comp, C-Delay, C-Chorus, C-Phaser, C-Filter, C-Dist, C-Esser, C-Synth and C-Lead): into dist\VST3, then installed in "Common Files\VST3\CDAW" where
 # Cubase and other hosts scan. That folder needs admin rights, so install-vst3.ps1 runs elevated (one UAC
 # prompt); if that is declined the plugins go to the per-user VST3 folder instead.
 # Rebuild first (incremental, quick when nothing changed) so the installed plugins never lag the shared code.
 # To add a plugin: add its CMake target, folder and bundle name here (and to Build-CDAW.bat).
 $plugins = @(
     @{ Target = 'CVerb_VST3';      Folder = 'CVerb';      Artefacts = 'CVerb_artefacts';      Bundle = 'C-Verb.vst3' },
-    @{ Target = 'CMulticomp_VST3'; Folder = 'CMulticomp'; Artefacts = 'CMulticomp_artefacts'; Bundle = 'C-Multicomp.vst3' }
+    @{ Target = 'CMulticomp_VST3'; Folder = 'CMulticomp'; Artefacts = 'CMulticomp_artefacts'; Bundle = 'C-Multicomp.vst3' },
+    @{ Target = 'CComp_VST3';      Folder = 'CComp';      Artefacts = 'CComp_artefacts';      Bundle = 'C-Comp.vst3' },
+    @{ Target = 'CDelay_VST3';     Folder = 'CDelay';     Artefacts = 'CDelay_artefacts';     Bundle = 'C-Delay.vst3' },
+    @{ Target = 'CChorus_VST3';    Folder = 'CChorus';    Artefacts = 'CChorus_artefacts';    Bundle = 'C-Chorus.vst3' },
+    @{ Target = 'CPhaser_VST3';    Folder = 'CPhaser';    Artefacts = 'CPhaser_artefacts';    Bundle = 'C-Phaser.vst3' },
+    @{ Target = 'CFilter_VST3';    Folder = 'CFilter';    Artefacts = 'CFilter_artefacts';    Bundle = 'C-Filter.vst3' },
+    @{ Target = 'CDist_VST3';      Folder = 'CDist';      Artefacts = 'CDist_artefacts';      Bundle = 'C-Dist.vst3' },
+    @{ Target = 'CEsser_VST3';     Folder = 'CEsser';     Artefacts = 'CEsser_artefacts';     Bundle = 'C-Esser.vst3' },
+    @{ Target = 'CSynth_VST3';     Folder = 'CSynth';     Artefacts = 'CSynth_artefacts';     Bundle = 'C-Synth.vst3' },
+    @{ Target = 'CLead_VST3';      Folder = 'CLead';      Artefacts = 'CLead_artefacts';      Bundle = 'C-Lead.vst3' }
 )
 
 $distVst3 = "$root\dist\VST3"

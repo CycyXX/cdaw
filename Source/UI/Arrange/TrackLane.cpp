@@ -2,6 +2,7 @@
 #include "RecordingClipComponent.h"
 #include "TakeLanes.h"
 #include "../../Model/CompOps.h"
+#include "../../Model/GroupEdit.h"
 #include "TimeRuler.h"
 #include "../LookAndFeel/Palette.h"
 
@@ -93,13 +94,23 @@ namespace cdaw
             repaint (changed.getStart() - 1, 0, changed.getLength() + 2, getHeight());
     }
 
+    static bool isFirstInGroupWithTakes (te::Track& track)
+    {
+        for (auto* ct : GroupEdit::getGroupTracks (track))
+            if (CompOps::trackHasTakes (*ct))
+                return ct == &track;
+
+        return true;
+    }
+
     void TrackLane::updateTakeLanes()
     {
         auto numTakes = CompOps::getMaxTakesOnTrack (*track);
 
-        // Fresh loop recording: show the lanes so the takes can be comped straight away.
-        if (numTakes > 1 && numTakes != lastNumTakes && lastNumTakes <= 1 && ! EditViewState::isShowingTakes (*track))
-            if (track->edit.getTransport().isRecording() || track->edit.getTransport().isRecordingStopping() || lastNumTakes == 1)
+        // Fresh takes: show the lanes so they can be comped straight away. In a group, on its first
+        // track only: comping there comps them all, and 16 sets of lanes would fill the screen.
+        if (numTakes > 1 && lastNumTakes >= 0 && lastNumTakes <= 1 && ! EditViewState::isShowingTakes (*track))
+            if (isFirstInGroupWithTakes (*track))
                 EditViewState::setShowingTakes (*track, true);
 
         lastNumTakes = numTakes;
@@ -141,7 +152,6 @@ namespace cdaw
             }
         }
 
-        lastNumTakes = juce::jmax (lastNumTakes, 0);
         updateTakeLanes();
         updateRecordingClip();
     }
@@ -201,8 +211,14 @@ namespace cdaw
         }
 
         if (te::Clip::isClipState (v) && (id == te::IDs::start || id == te::IDs::length || id == te::IDs::offset))
+        {
             markAndUpdate (needsReposition);
-        else if (te::Clip::isClipState (v) && id == te::IDs::source && takeLanes != nullptr)
+
+            if (takeLanes != nullptr)
+                takeLanes->repaint();
+        }
+        else if (takeLanes != nullptr && ((te::Clip::isClipState (v) && (id == te::IDs::source || id == te::IDs::currentTake))
+                                           || v.hasType (te::IDs::NOTE)))
             takeLanes->repaint();
         else if (v == track->state && id == te::IDs::colour)
             repaint();
@@ -216,6 +232,8 @@ namespace cdaw
             markAndUpdate (needsRebuild);
         else if (child.hasType (te::IDs::TAKES) || parent.hasType (te::IDs::TAKES))
             markAndUpdate (needsRebuild);
+        else if (parent.hasType (te::IDs::SEQUENCE) && takeLanes != nullptr)
+            takeLanes->repaint();
     }
 
     void TrackLane::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree& child, int)
@@ -224,6 +242,8 @@ namespace cdaw
             markAndUpdate (needsRebuild);
         else if (child.hasType (te::IDs::TAKES) || parent.hasType (te::IDs::TAKES))
             markAndUpdate (needsRebuild);
+        else if (parent.hasType (te::IDs::SEQUENCE) && takeLanes != nullptr)
+            takeLanes->repaint();
     }
 
     void TrackLane::valueTreeChildOrderChanged (juce::ValueTree& parent, int, int)

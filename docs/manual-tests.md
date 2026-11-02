@@ -25,7 +25,10 @@ Before you start:
 - [ ] Guitar DI into Hi-Z input 1. Create an audio track, input "In 1", arm it: you hear the DI.
 - [ ] Record 8 bars with the click and a 1-bar count-in.
 - [ ] Punch in on bars 5-6 only (punch on, loop range bars 5-6).
-- [ ] Loop-record 4 passes over 4 bars: the clip shows 4 takes.
+- [ ] Loop-record 4 passes over 4 bars: the clip shows 4 takes, the lanes open and the last complete pass plays.
+- [ ] Record 8 bars, then record bars 3-4 again without looping. While recording you hear the new pass and not the
+      old one; afterwards both are on the lanes, and the old pass plays either side of the new one.
+- [ ] Punch in on a recorded part: the lead-in plays the old take, the punch range doesn't. Both end up as takes.
 - [ ] Loopback cable from output 3 to input 2: record the click and zoom in. It should line up
       within about 1 ms. If not, set Preferences > Recording > Manual offset.
 
@@ -37,7 +40,9 @@ Before you start:
 
 ## M4: MIDI
 - [ ] USB keyboard into an SSD5 instrument track: hits play with low latency.
-- [ ] Record 8 bars, then loop-overdub hi-hats.
+- [ ] Record 8 bars, then record over bars 3-4: the first pass goes quiet while recording and stays as a take.
+      Lanes show both passes as notes. Ctrl+Down / Ctrl+Up on the clip switch takes, and swiping a lane comps them.
+- [ ] Preferences > Recording > Recording MIDI over a clip > Overdub: loop-overdub hi-hats into the kit.
 - [ ] Drum editor: rows match SSD5's pieces (edit resources\drummaps\SSD5.txt if not).
 - [ ] Quantize to 1/16. Export a .mid and open it elsewhere.
 - [ ] teVirtualMIDI ports do not cause doubled notes.
@@ -45,6 +50,12 @@ Before you start:
 ## M5: editing and comping
 - [ ] Split, trim, fade, crossfade and move clips; everything plays without clicks.
 - [ ] Record 4 takes of a riff, swipe-comp the best parts, playback is seamless, then flatten.
+- [ ] Open a project with a drum kit split over many tracks: select them, Ctrl+Shift+G. In the new folder (G lit):
+      click one clip and all the lined-up clips select. Drag, trim, fade, nudge, mute, delete and split one: all
+      follow and stay in phase. A range over one track covers the whole group. Click G on the folder (or Ctrl+G) to
+      edit one track alone.
+- [ ] Multi-mic recording of the kit, twice over the same bars: only the first track opens its lanes. Swipe there:
+      every drum track switches at the same place, no phase jump at the joins.
 - [ ] Add a tempo change mid-song and a 7/8 bar: MIDI follows, audio keeps its position.
 
 ## M6: mixer
@@ -55,7 +66,20 @@ Before you start:
 ## M7: automation
 - [ ] Latch-automate the Nolly X gain from its own GUI during playback; edit the points afterwards.
 
-## M8: export
+## M8: songwriting
+- [ ] Open Night Drive v2, File > Save New Version (Ctrl+Alt+S) with a note: the title shows `Night Drive v2_02`.
+      File > Versions lists both with their notes; open the first one: it is unchanged.
+- [ ] F4: write song notes and lyrics for two sections. Play: the lyric box of the section playing lights up.
+      Alt-drag a section to copy it: the copy has the lyrics. Save, reopen: everything is there.
+- [ ] Set the key to A Minor in the transport bar; open a MIDI clip: notes outside A minor are shaded.
+      Turn on Snap to Key, draw and drag notes, press Up / Down: they stay in the key.
+- [ ] Build a "Metal demo": SSD5 track, four guitar DIs on Nolly / Plini in a "Guitars" group, bass, a reverb
+      FX return with sends. File > Save as Template, then File > New from Template: all of it is there, the
+      plugins with their presets, and no clips.
+- [ ] Right-click the Nolly track > Save as Track Preset; in another song with an FX track of the same name,
+      Insert Track Preset: the send reaches that FX track.
+
+## M9: export
 - [ ] Export the song as 24-bit / 48 kHz WAV.
 - [ ] Export stems; import them into another DAW at bar 1; they line up.
 - [ ] Export MP3 (needs libmp3lame.dll, see README).

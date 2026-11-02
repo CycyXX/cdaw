@@ -1,29 +1,33 @@
 #pragma once
 
 #include "../PCH.h"
-#include "../Shared/DSP/PeakMeter.h"
+#include "../Shared/DSP/CompressorEngine.h"
 
 namespace cdaw
 {
-    /** CDAW's compressor. Keeps Tracktion's compressor parameters (and its sidechain input,
+    /** C-Comp: CDAW's compressor (see CompressorEngine for what it does). Keeps Tracktion's compressor parameters (and its sidechain input,
         so sidechain routing and automation work unchanged) but computes gain in decibels, so the
         ratio is a true ratio, adds a soft knee, and meters input, output and gain reduction for
         its editor.
 
         Parameters: threshold (gain, -40..0 dB), ratio (stored as 1/ratio, 0 = limiter), attack,
-        release, output (make-up) and sidechain gain from Tracktion; knee (dB) added here. */
+        release, output (make-up) and sidechain gain from Tracktion; knee (dB) added here.
+        The type name stays "cdawCompressor" so projects made before the rename still open.
+        Its DSP (CompressorEngine), parameter list (CompressorParameters) and editor view
+        (CompressorView) are shared with the VST3 build in VST3/CComp. */
     class CompressorPlugin : public te::CompressorPlugin
     {
     public:
         explicit CompressorPlugin (te::PluginCreationInfo);
         ~CompressorPlugin() override;
 
-        static const char* getPluginName()      { return NEEDS_TRANS("Compressor"); }
+        static const char* getPluginName()      { return NEEDS_TRANS("C-Comp"); }
         static const char* xmlTypeName;
 
-        juce::String getName() const override                   { return TRANS("Compressor"); }
+        juce::String getName() const override                   { return TRANS("C-Comp"); }
         juce::String getPluginType() override                   { return xmlTypeName; }
-        juce::String getSelectableDescription() override        { return TRANS("Compressor"); }
+        juce::String getShortName (int) override                { return "C-Comp"; }
+        juce::String getSelectableDescription() override        { return TRANS("C-Comp"); }
 
         void initialise (const te::PluginInitialisationInfo&) override;
         void applyToBuffer (const te::PluginRenderContext&) override;
@@ -41,13 +45,12 @@ namespace cdaw
 
         te::ParameterWithStateValue knee;
 
-        // Meters for the editor (linear gain peaks; gain reduction in positive dB).
-        PeakMeter inputPeak[2], outputPeak[2], detectorPeak, gainReduction;
-        std::atomic<bool> sidechainActive { false };
+        CompressorEngine::Settings getSettings() const;
+
+        /** Holds the meters for the editor (linear gain peaks; gain reduction in positive dB). */
+        CompressorEngine engine;
 
     private:
-        double envelopeDb = 0.0;        // smoothed gain change (<= 0)
-
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CompressorPlugin)
     };
 }

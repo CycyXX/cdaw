@@ -18,6 +18,49 @@ namespace cdaw::test
         {
             auto& engine = getEngine();
 
+            beginTest ("Inserts move between each other; the fader, sends and an instrument stay put");
+            {
+                auto edit = te::test_utilities::createTestEdit (engine, 1);
+                auto track = te::getAudioTracks (*edit)[0];
+                auto& list = track->pluginList;
+                auto add = [&] (const char* type, int at)
+                {
+                    auto p = edit->getPluginCache().createNewPlugin (type, {});
+                    list.insertPlugin (p, at, nullptr);
+                    return p;
+                };
+                auto synth = add (te::FourOscPlugin::xmlTypeName, 0);
+                auto a = add (te::CompressorPlugin::xmlTypeName, 1);
+                auto b = add (te::ReverbPlugin::xmlTypeName, 2);
+                auto c = add (te::DelayPlugin::xmlTypeName, 3);
+                MixerOps::addSend (*track, 0, true);
+
+                auto order = [&]
+                {
+                    juce::StringArray names;
+                    for (auto p : MixerOps::getInserts (*track))
+                        names.add (p->getPluginType());
+                    return names.joinIntoString (" ");
+                };
+                auto volumeIndex = [&] { return list.indexOf (track->getVolumePlugin()); };
+                const auto volumeBefore = volumeIndex();
+                const auto start = order();
+
+                expect (MixerOps::moveInsert (list, *c, 1), "the last to just after the instrument");
+                expectEquals (order(), juce::String (te::FourOscPlugin::xmlTypeName) + " " + te::DelayPlugin::xmlTypeName + " "
+                                           + te::CompressorPlugin::xmlTypeName + " " + te::ReverbPlugin::xmlTypeName);
+                expect (MixerOps::moveInsert (list, *c, 4), "and to the end");
+                expectEquals (order(), start);
+                expect (! MixerOps::moveInsert (list, *a, 1), "to where it already is: nothing moves");
+                expect (! MixerOps::moveInsert (list, *a, 2), "nor just after itself");
+                expect (MixerOps::moveInsert (list, *b, 0), "nothing goes before the instrument (taken as 1)");
+                expect (MixerOps::getInserts (*track).getFirst() == synth.get(), "the instrument is still first");
+                expect (! MixerOps::moveInsert (list, *synth, 3), "the instrument can't move");
+                expectEquals (volumeIndex(), volumeBefore, "the fader stays where it was");
+                expectEquals (MixerOps::getSends (*track).size(), 1);
+                expect (MixerOps::isPostFader (*MixerOps::getSends (*track).getFirst()), "the send is still after the fader");
+            }
+
             beginTest ("A sidechained compressor ducks only while the key track plays");
             {
                 auto edit = te::test_utilities::createTestEdit (engine, 2);
