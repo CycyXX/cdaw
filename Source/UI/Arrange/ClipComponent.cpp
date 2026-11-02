@@ -167,36 +167,161 @@ namespace cdaw
         if (columns.isEmpty())
             return;
 
-        auto pos = ac.getPosition();
-        const auto speed = ac.getSpeedRatio();
-        const auto sourceLength = ac.getSourceLength().inSeconds();
-        const bool reversed = ac.getIsReversed();
-
-        // Source time at the left edge of a local x position.
-        auto xToSourceSeconds = [&] (int localX)
-        {
-            auto editTime = viewState.xToTime (getX() + localX);
-            auto t = ((editTime - pos.getStart()) + pos.getOffset()).inSeconds() * speed;
-            return reversed ? sourceLength - t : t;
-        };
-
         const float gain = ac.getGain();
         g.setColour (colour);
 
-        if (thumbnail->getNumChannels() > 1 && area.getHeight() > 40)
+        const bool reloading = showingPeaksWhileReloading (ac, columns, area);
+        const bool allChannelsTogether = reloading ? waveformPeaks.key.allChannelsTogether
+                                                   : ! (thumbnail->getNumChannels() > 1 && area.getHeight() > 40);
+
+        if (! reloading)
+            updateWaveformPeaks (ac, columns.getX(), columns.getRight(), allChannelsTogether);
+
+        if (allChannelsTogether)
         {
-            auto top = area.withHeight (area.getHeight() / 2);
-            drawWaveform (g, top, columns, xToSourceSeconds, 0, gain);
-            drawWaveform (g, area.withTrimmedTop (top.getHeight()), columns, xToSourceSeconds, 1, gain);
+            drawWaveform (g, area, columns, 0, gain);
         }
         else
         {
-            drawWaveform (g, area, columns, xToSourceSeconds, -1, gain);
+            auto top = area.withHeight (area.getHeight() / 2);
+            drawWaveform (g, top, columns, 0, gain);
+            drawWaveform (g, area.withTrimmedTop (top.getHeight()), columns, 1, gain);
         }
     }
 
-    void ClipComponent::drawWaveform (juce::Graphics& g, juce::Rectangle<int> lane, juce::Rectangle<int> columns,
-                                      const std::function<double (int)>& xToSourceSeconds, int channel, float gain)
+    ClipComponent::WaveformPeaks::Key ClipComponent::makeWaveformKey (te::AudioClipBase& ac, bool allChannelsTogether) const
+    {
+        WaveformPeaks::Key key;
+        key.pixelsPerSecond = viewState.pixelsPerSecond.get();
+        key.offset = ac.getPosition().getOffset().inSeconds();
+        key.speed = ac.getSpeedRatio();
+        key.sourceLength = ac.getSourceLength().inSeconds();
+        key.fileLength = thumbnail->getTotalLength();
+        key.reversed = ac.getIsReversed();
+        key.allChannelsTogether = allChannelsTogether;
+        key.file = thumbnailFile;
+        return key;
+    }
+
+    bool ClipComponent::showingPeaksWhileReloading (te::AudioClipBase& ac, juce::Rectangle<int> columns, juce::Rectangle<int> area)
+    {
+        auto& peaks = waveformPeaks;
+
+        // About 600 ms after any change to a clip, Tracktion lets go of its file, which empties every
+        // thumbnail of that file until it has loaded again. What was drawn is still right meanwhile:
+        // the waveform would otherwise blink. A file that has gone really has gone, though.
+        if ((thumbnail->isFullyLoaded() && thumbnail->getNumChannels() > 0)
+             || peaks.lows[0].empty()
+             || columns.getX() < peaks.first || columns.getRight() > peaks.end()
+             || (! peaks.key.allChannelsTogether && area.getHeight() <= 40))
+            return false;
+
+        auto key = makeWaveformKey (ac, peaks.key.allChannelsTogether);
+        key.fileLength = peaks.key.fileLength;
+
+        if (! (key == peaks.key) || ! thumbnailFile.existsAsFile())
+            return false;
+
+        peaks.needsRefresh = true;     // once it has loaded: the file may have changed
+        return true;
+    }
+
+    void ClipComponent::updateWaveformPeaks (te::AudioClipBase& ac, int fromColumn, int toColumn, bool allChannelsTogether)
+    {
+        const auto key = makeWaveformKey (ac, allChannelsTogether);
+        auto& peaks = waveformPeaks;
+
+        // Peaks keep changing while the thumbnail loads. What's kept must also touch what's needed,
+        // as the vectors can't have a gap.
+        if (! (key == peaks.key) || ! thumbnail->isFullyLoaded() || peaks.needsRefresh
+             || peaks.lows[0].empty() || toColumn < peaks.first || fromColumn > peaks.end())
+        {
+            peaks.clear();
+            peaks.key = key;
+            peaks.first = fromColumn;
+            peaks.needsRefresh = false;
+        }
+
+        const int numSlots = allChannelsTogether ? 1 : 2;
+
+        auto findPeaks = [&] (int column, int slot, float& low, float& high)
+        {
+            auto toSource = [&] (int c)
+            {
+                auto t = (c / key.pixelsPerSecond + key.offset) * key.speed;
+                return key.reversed ? key.sourceLength - t : t;
+            };
+
+            auto a = toSource (column), b = toSource (column + 1);
+            if (a > b) std::swap (a, b);
+
+            const int firstChannel = allChannelsTogether ? 0 : slot;
+            const int endChannel = allChannelsTogether ? thumbnail->getNumChannels() : slot + 1;
+            low = high = 0.0f;
+
+            for (int ch = firstChannel; ch < endChannel; ++ch)
+            {
+                float mn = 0.0f, mx = 0.0f;
+                thumbnail->getApproximateMinMax (a, b, ch, mn, mx);
+                low = juce::jmin (low, mn);
+                high = juce::jmax (high, mx);
+            }
+        };
+
+        // Whichever columns are new, on either side of what's kept.
+        if (fromColumn < peaks.first)
+        {
+            const auto numNew = (size_t) (peaks.first - fromColumn);
+
+            for (int slot = 0; slot < numSlots; ++slot)
+            {
+                std::vector<float> lows (numNew), highs (numNew);
+
+                for (size_t i = 0; i < numNew; ++i)
+                    findPeaks (fromColumn + (int) i, slot, lows[i], highs[i]);
+
+                peaks.lows[slot].insert (peaks.lows[slot].begin(), lows.begin(), lows.end());
+                peaks.highs[slot].insert (peaks.highs[slot].begin(), highs.begin(), highs.end());
+            }
+
+            peaks.first = fromColumn;
+        }
+
+        for (int column = peaks.end(), end = toColumn; column < end; ++column)
+        {
+            for (int slot = 0; slot < numSlots; ++slot)
+            {
+                float low, high;
+                findPeaks (column, slot, low, high);
+                peaks.lows[slot].push_back (low);
+                peaks.highs[slot].push_back (high);
+            }
+        }
+
+        // Three screens' worth at most, keeping the side being looked at.
+        const auto* parent = getParentComponent();
+        const int limit = 3 * juce::jmax (256, toColumn - fromColumn, parent != nullptr ? parent->getWidth() : 0);
+
+        if ((int) peaks.lows[0].size() > limit)
+        {
+            const int centre = (fromColumn + toColumn) / 2;
+            const int newFirst = juce::jlimit (peaks.first, peaks.end() - limit, centre - limit / 2);
+            const auto dropFront = (size_t) (newFirst - peaks.first);
+
+            for (int slot = 0; slot < numSlots; ++slot)
+            {
+                for (auto* v : { &peaks.lows[slot], &peaks.highs[slot] })
+                {
+                    v->erase (v->begin(), v->begin() + (std::ptrdiff_t) dropFront);
+                    v->resize ((size_t) limit);
+                }
+            }
+
+            peaks.first = newFirst;
+        }
+    }
+
+    void ClipComponent::drawWaveform (juce::Graphics& g, juce::Rectangle<int> lane, juce::Rectangle<int> columns, int peaksIndex, float gain)
     {
         // One filled path of per-pixel min/max values. (AudioThumbnail::drawChannel draws a
         // rectangle list, which Direct2D turns into a costly sprite batch on every repaint.)
@@ -206,29 +331,18 @@ namespace cdaw
         if (x1 <= x0 || lane.getHeight() < 2)
             return;
 
-        const int numChannels = thumbnail->getNumChannels();
         const float mid = (float) lane.getCentreY();
         const float half = (float) lane.getHeight() * 0.5f - 0.5f;
+        const auto& lows = waveformPeaks.lows[peaksIndex];
+        const auto& highs = waveformPeaks.highs[peaksIndex];
 
         std::vector<float> tops ((size_t) (x1 - x0)), bottoms ((size_t) (x1 - x0));
 
         for (int x = x0; x < x1; ++x)
         {
-            auto a = xToSourceSeconds (x), b = xToSourceSeconds (x + 1);
-            if (a > b) std::swap (a, b);
-
-            float lo = 0.0f, hi = 0.0f;
-
-            for (int ch = (channel < 0 ? 0 : channel); ch < (channel < 0 ? numChannels : channel + 1); ++ch)
-            {
-                float mn = 0.0f, mx = 0.0f;
-                thumbnail->getApproximateMinMax (a, b, ch, mn, mx);
-                lo = juce::jmin (lo, mn);
-                hi = juce::jmax (hi, mx);
-            }
-
-            auto top = mid - juce::jlimit (-1.0f, 1.0f, hi * gain) * half;
-            auto bottom = mid - juce::jlimit (-1.0f, 1.0f, lo * gain) * half;
+            const auto column = (size_t) (x - waveformPeaks.first);
+            auto top = mid - juce::jlimit (-1.0f, 1.0f, highs[column] * gain) * half;
+            auto bottom = mid - juce::jlimit (-1.0f, 1.0f, lows[column] * gain) * half;
 
             // Keep at least a hairline so quiet passages stay visible.
             if (bottom - top < 1.0f)

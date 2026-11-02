@@ -43,8 +43,9 @@ namespace cdaw
         void updateCursor (Zone);
         void updateThumbnail();
         void drawAudio (juce::Graphics&, te::AudioClipBase&, juce::Rectangle<int>);
-        void drawWaveform (juce::Graphics&, juce::Rectangle<int> lane, juce::Rectangle<int> columns,
-                           const std::function<double (int)>& xToSourceSeconds, int channel, float gain);
+        void updateWaveformPeaks (te::AudioClipBase&, int fromColumn, int toColumn, bool allChannelsTogether);
+        bool showingPeaksWhileReloading (te::AudioClipBase&, juce::Rectangle<int> columns, juce::Rectangle<int> area);
+        void drawWaveform (juce::Graphics&, juce::Rectangle<int> lane, juce::Rectangle<int> columns, int peaksIndex, float gain);
         void drawMidi (juce::Graphics&, te::MidiClip&, juce::Rectangle<int>);
         void drawFades (juce::Graphics&, te::AudioClipBase&, juce::Rectangle<int>);
         void drawGainHandle (juce::Graphics&, te::AudioClipBase&);
@@ -64,6 +65,31 @@ namespace cdaw
         te::Clip::Ptr clip;
         std::unique_ptr<te::SmartThumbnail> thumbnail;
         juce::File thumbnailFile;
+
+        /** The lowest and highest value under each pixel column of the waveform, counted from the
+            clip's start, so scrolling only has to look up the columns it brings into view. */
+        struct WaveformPeaks
+        {
+            struct Key
+            {
+                double pixelsPerSecond = 0.0, offset = 0.0, speed = 0.0, sourceLength = 0.0, fileLength = 0.0;
+                bool reversed = false, allChannelsTogether = false;
+                juce::File file;
+
+                bool operator== (const Key&) const = default;
+            };
+
+            Key key;
+            int first = 0;      // the column the vectors start at
+            bool needsRefresh = false;
+            std::vector<float> lows[2], highs[2];
+
+            int end() const     { return first + (int) lows[0].size(); }
+            void clear()        { for (auto* v : { &lows[0], &lows[1], &highs[0], &highs[1] }) v->clear(); }
+        };
+
+        WaveformPeaks waveformPeaks;
+        WaveformPeaks::Key makeWaveformKey (te::AudioClipBase&, bool allChannelsTogether) const;
 
         // "[take 2/5]": reading the takes is too slow to do on every paint.
         juce::String takesLabel;
