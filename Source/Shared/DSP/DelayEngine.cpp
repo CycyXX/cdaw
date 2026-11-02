@@ -37,6 +37,8 @@ namespace cdaw
         for (auto& line : lines)
             line.setMaxSamples (maxSamples);
 
+        linesAreClear = true;
+
         for (auto& d : delaySamples)
             d.reset (rate, 0.12);
 
@@ -49,9 +51,12 @@ namespace cdaw
 
     void DelayEngine::reset()
     {
-        for (auto& line : lines)
-            line.clear();
+        // Megabytes, and the synths call this on the audio thread when their delay is switched on.
+        if (! linesAreClear)
+            for (auto& line : lines)
+                line.clear();
 
+        linesAreClear = true;
         lowCut.clear();
         highCut.clear();
         envelope = 0.0f;
@@ -214,7 +219,8 @@ namespace cdaw
         // Ducking: an envelope on the dry input pulls the echoes down while it plays.
         const float envAttack = (float) std::exp (-1.0 / (0.002 * rate)), envRelease = (float) std::exp (-1.0 / (0.25 * rate));
         const float duck = juce::jlimit (0.0f, 1.0f, s.duck);
-        float deepestDuck = 0.0f;
+        float lowestDuckGain = 1.0f;
+        linesAreClear = false;
 
         float inPeak[2] {}, outPeak[2] {};
 
@@ -273,7 +279,7 @@ namespace cdaw
                 duckTarget = juce::Decibels::decibelsToGain (-reductionDb);
             }
             const float duckNow = duckGain.next (duckTarget);
-            deepestDuck = juce::jmin (deepestDuck, juce::Decibels::gainToDecibels (duckNow, -100.0f));
+            lowestDuckGain = juce::jmin (lowestDuckGain, duckNow);
 
             // Width of the echoes, then the mix.
             const float mid = 0.5f * (echo[0] + echo[1]), side = 0.5f * (echo[0] - echo[1]) * width;
@@ -310,6 +316,6 @@ namespace cdaw
             wetPeak[ch].push (outPeak[ch]);
         }
 
-        duckReduction.push (-deepestDuck);
+        duckReduction.push (-juce::Decibels::gainToDecibels (lowestDuckGain, -100.0f));
     }
 }

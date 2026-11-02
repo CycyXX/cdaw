@@ -212,30 +212,56 @@ namespace cdaw
         return 20.0 * std::log10 (juce::jmax (1.0e-6, std::abs (h)));
     }
 
+    namespace
+    {
+        /** The drive curve at one setting, with what only depends on the setting worked out once. */
+        struct DriveShape
+        {
+            using DriveType = LeadEngine::DriveType;
+
+            DriveShape (DriveType t, float d)
+                : type (t), drive (juce::jlimit (0.0f, 1.0f, d)), bypassed (drive <= 0.0001f)
+            {
+                if (bypassed || type == DriveType::fold)
+                    return;
+
+                g = juce::Decibels::decibelsToGain (30.0f * drive);
+                atFullScale = type == DriveType::tube ? tube (g) : std::tanh (g);
+            }
+
+            // Uneven halves: the even harmonics of a tube stage.
+            static float tube (float y)     { return y >= 0.0f ? std::tanh (y) : std::tanh (0.6f * y) / 0.6f * 0.8f; }
+
+            float process (float x) const
+            {
+                if (bypassed)
+                    return x;
+
+                switch (type)
+                {
+                    case DriveType::tube:
+                        return tube (g * x) / atFullScale;
+                    case DriveType::fold:
+                    {
+                        const float folded = std::sin (juce::MathConstants<float>::halfPi * x * (1.0f + 5.0f * drive));
+                        return x + juce::jmin (1.0f, drive * 4.0f) * (folded - x);
+                    }
+                    case DriveType::soft:
+                    default:
+                        return std::tanh (g * x) / atFullScale;
+                }
+            }
+
+            DriveType type;
+            float drive;
+            bool bypassed;
+            float g = 1.0f, atFullScale = 1.0f;
+        };
+    }
+
     float LeadEngine::driveCurve (DriveType type, float drive, float x)
     {
-        drive = juce::jlimit (0.0f, 1.0f, drive);
-        if (drive <= 0.0001f)
-            return x;
-
-        const float g = juce::Decibels::decibelsToGain (30.0f * drive);
-        switch (type)
-        {
-            case DriveType::tube:
-            {
-                // Uneven halves: the even harmonics of a tube stage.
-                auto shape = [] (float y) { return y >= 0.0f ? std::tanh (y) : std::tanh (0.6f * y) / 0.6f * 0.8f; };
-                return shape (g * x) / shape (g);
-            }
-            case DriveType::fold:
-            {
-                const float folded = std::sin (juce::MathConstants<float>::halfPi * x * (1.0f + 5.0f * drive));
-                return x + juce::jmin (1.0f, drive * 4.0f) * (folded - x);
-            }
-            case DriveType::soft:
-            default:
-                return std::tanh (g * x) / std::tanh (g);
-        }
+        return DriveShape (type, drive).process (x);
     }
 
     float LeadEngine::waveAt (const Settings& s, int o, double phase)
@@ -778,6 +804,7 @@ namespace cdaw
         const auto type = s.filterType;
         const bool tube = s.driveType == DriveType::tube;
         const double dcCoefficient = std::exp (-twoPi * 10.0 / innerRate);
+        const DriveShape driveShape (s.driveType, v.drive);
 
         int unison[numOscillators];
         Wave wave[numOscillators];
@@ -881,7 +908,7 @@ namespace cdaw
             double sides[2] { l, r };
             for (int ch = 0; ch < 2; ++ch)
             {
-                double x = driveCurve (s.driveType, v.drive, (float) sides[ch]);
+                double x = driveShape.process ((float) sides[ch]);
 
                 if (tube)
                 {

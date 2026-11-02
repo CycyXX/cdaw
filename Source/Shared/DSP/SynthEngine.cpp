@@ -567,10 +567,11 @@ namespace cdaw
 
                 float ol = 0.0f, orr = 0.0f;
                 const float position = v.position[o];
+                const auto morph = tables.morphAt (bank[o], position, v.level[o]);
                 for (int u = 0; u < unison[o]; ++u)
                 {
                     auto& phase = v.phase[o][u];
-                    const float x = tables.read (bank[o], position, v.level[o], phase);
+                    const float x = Wavetables::read (morph, phase);
                     ol += x * v.gain[o][u][0];
                     orr += x * v.gain[o][u][1];
                     phase += v.increment[o][u];
@@ -609,6 +610,8 @@ namespace cdaw
             }
 
             // The voice's filter, each side.
+            const Svf::Coefficients stage1 (v.g, v.k1);
+            const auto stage2 = steep ? Svf::Coefficients (v.g, v.k2) : stage1;
             double sides[2] { l, r };
             for (int ch = 0; ch < 2; ++ch)
             {
@@ -617,12 +620,12 @@ namespace cdaw
                     x = 2.0 / driveGain * softClip ((float) x * driveGain * 0.5f);
 
                 double low, band, high;
-                v.filter[ch][0].process (x, v.g, v.k1, low, band, high);
+                v.filter[ch][0].process (x, stage1, low, band, high);
                 double y = pick (low, band, high, x);
 
                 if (steep)
                 {
-                    v.filter[ch][1].process (y, v.g, v.k2, low, band, high);
+                    v.filter[ch][1].process (y, stage2, low, band, high);
                     y = pick (low, band, high, y);
                 }
 

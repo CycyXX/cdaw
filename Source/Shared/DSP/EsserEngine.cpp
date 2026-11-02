@@ -147,7 +147,7 @@ namespace cdaw
                 thresholdDb = juce::jmax (autoFloorDb, (float) (10.0 * std::log10 (programme + 1.0e-12)) + autoOffsetDb);
 
             const float reductionDb = getReductionDb (s, juce::Decibels::gainToDecibels ((float) envelope, -120.0f), thresholdDb);
-            const double gain = juce::Decibels::decibelsToGain ((double) -reductionDb);
+            const double gain = juce::exactlyEqual (reductionDb, 0.0f) ? 1.0 : juce::Decibels::decibelsToGain ((double) -reductionDb);
             mostReduction = juce::jmax (mostReduction, reductionDb);
 
             lastOutputGain += outputStep;

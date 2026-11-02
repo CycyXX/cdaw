@@ -164,15 +164,24 @@ namespace cdaw
         return sum;
     }
 
+    float DistEngine::HalfBand::centreOnly (const State& s) const noexcept
+    {
+        return taps[(size_t) centre] * s.history[(size_t) ((s.write - 1 - centre) & 127)];
+    }
+
     void DistEngine::HalfBand::up (State& s, const float* in, int n, float* out) const noexcept
     {
-        // Zero-stuffed (doubled, as half the samples are zero), then filtered.
+        // Zero-stuffed (doubled, as half the samples are zero), then filtered. Besides the centre,
+        // the taps sit an odd distance from it. So on every other output they all land on the
+        // stuffed zeros and only the centre counts: which outputs depends on where the centre is.
+        const bool centreIsOdd = (centre & 1) != 0;
+
         for (int i = 0; i < n; ++i)
         {
             s.push (2.0f * in[i]);
-            out[2 * i] = filter (s);
+            out[2 * i] = centreIsOdd ? filter (s) : centreOnly (s);
             s.push (0.0f);
-            out[2 * i + 1] = filter (s);
+            out[2 * i + 1] = centreIsOdd ? centreOnly (s) : filter (s);
         }
     }
 
@@ -426,8 +435,15 @@ namespace cdaw
         if (same)
             return;
 
+        // The compensation is slow to work out and doesn't depend on the tone controls.
+        const bool sameCompensation = hasDesign && s.voicing == designed.voicing && s.drive == designed.drive
+                                      && s.tight == designed.tight && s.character == designed.character;
+
         coefficients = designFor (s, rate);
-        compensationTarget = compensationFor (s, rate);
+
+        if (! sameCompensation)
+            compensationTarget = compensationFor (s, rate);
+
         designed = s;
         hasDesign = true;
     }
@@ -540,10 +556,16 @@ namespace cdaw
 
         float sumIn[maxStages] {}, sumOut[maxStages] {};
         Operating o;
+        double curveAtBias[maxStages] {};
         for (int j = 0; j < n * oversampling; ++j)
         {
             if (j % oversampling == 0)
+            {
                 o = operatingPoint (p, g, b, envelopes[(size_t) (j / oversampling)]);
+
+                for (int st = 0; st < p.stages; ++st)
+                    curveAtBias[st] = raw (p.curve, o.bias[st]);
+            }
 
             double v = upsampled2[(size_t) j];
 
@@ -558,7 +580,7 @@ namespace cdaw
                 stage.previousV = in;
                 stage.previousF = F;
 
-                const double shaped = averaged - raw (p.curve, o.bias[st]);
+                const double shaped = averaged - curveAtBias[st];
                 sumIn[st] += (float) std::abs (u);
                 sumOut[st] += (float) std::abs (shaped);
 

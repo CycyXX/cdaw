@@ -161,6 +161,7 @@ namespace cdaw
             const double makeUp = active ? band.gain : 0.0;
             const double attack = std::exp (-1.0 / (juce::jmax (0.05, (double) band.attack) * 0.001 * rate));
             const double release = std::exp (-1.0 / (juce::jmax (1.0, (double) band.release) * 0.001 * rate));
+            const float gainWithoutReduction = (float) std::pow (10.0, makeUp / 20.0);
             double& env = envelopeDb[(size_t) b];
             float bandIn = 0.0f, bandOut = 0.0f;
             double most = 0.0;
@@ -182,7 +183,8 @@ namespace cdaw
                     env = 0.0;
 
                 most = juce::jmin (most, env);
-                const float g = (float) std::pow (10.0, (env + makeUp) / 20.0);
+                const float g = juce::exactlyEqual (env, 0.0) ? gainWithoutReduction
+                                                              : (float) std::pow (10.0, (env + makeUp) / 20.0);
                 l[i] *= g;
                 if (r != nullptr) r[i] *= g;
                 bandOut = juce::jmax (bandOut, juce::jmax (std::abs (l[i]), r != nullptr ? std::abs (r[i]) : 0.0f));

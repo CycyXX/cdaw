@@ -31,19 +31,36 @@ namespace cdaw
             return data.data() + ((size_t) ((bank * numFrames + frameIndex) * numLevels + level)) * (tableSize + 1);
         }
 
-        /** A sample at `phase` (0..1) between two frames: `position` 0..1 across the bank. */
-        float read (int bank, float position, int level, double phase) const noexcept
+        /** Two neighbouring frames and how far between them: `position` 0..1 across the bank. */
+        struct Morph
+        {
+            const float* first;
+            const float* second;
+            float blend;
+        };
+
+        Morph morphAt (int bank, float position, int level) const noexcept
         {
             const float f = juce::jlimit (0.0f, 1.0f, position) * (float) (numFrames - 1);
             const int f0 = juce::jmin ((int) f, numFrames - 2);
-            const float blend = f - (float) f0;
+            return { frame (bank, f0, level), frame (bank, f0 + 1, level), f - (float) f0 };
+        }
+
+        /** A sample at `phase` (0..1). */
+        static float read (const Morph& morph, double phase) noexcept
+        {
             const double x = phase * tableSize;
             const int i = (int) x;
             const float t = (float) (x - i);
-            const float* a = frame (bank, f0, level) + i;
-            const float* b = frame (bank, f0 + 1, level) + i;
+            const float* a = morph.first + i;
+            const float* b = morph.second + i;
             const float va = a[0] + (a[1] - a[0]) * t, vb = b[0] + (b[1] - b[0]) * t;
-            return va + (vb - va) * blend;
+            return va + (vb - va) * morph.blend;
+        }
+
+        float read (int bank, float position, int level, double phase) const noexcept
+        {
+            return read (morphAt (bank, position, level), phase);
         }
 
         /** The first 128 harmonics' amplitudes of a frame (relative to its strongest), for displays. */

@@ -89,6 +89,7 @@ namespace cdaw
 
         double rate = 48000.0;
         FractionalDelay lines[2];
+        bool linesAreClear = false;
         Filter lowCut, highCut;
         float designedCuts[2] { -1.0f, -1.0f };
         Smoothed delaySamples[2], wetGain, dryGain, duckGain;

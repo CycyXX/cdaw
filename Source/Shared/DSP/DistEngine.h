@@ -146,6 +146,7 @@ namespace cdaw
 
             void design (int length, double beta);
             float filter (const State&) const noexcept;
+            float centreOnly (const State&) const noexcept;
             void up (State&, const float* in, int n, float* out) const noexcept;      // n -> 2n
             void down (State&, const float* in, int n, float* out) const noexcept;    // n -> n / 2
         };

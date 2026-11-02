@@ -74,7 +74,8 @@ namespace cdaw
 
             void setMaxSamples (int n)              { data.assign ((size_t) juce::jmax (4, n), 0.0f); write = 0; }
             void clear()                            { std::fill (data.begin(), data.end(), 0.0f); }
-            void push (float x) noexcept            { data[(size_t) write] = x; write = (write + 1) % (int) data.size(); }
+            void push (float x) noexcept            { data[(size_t) write] = x; advance(); }
+            void advance() noexcept                 { if (++write == (int) data.size()) write = 0; }
             float read (int samplesAgo) const noexcept
             {
                 auto i = write - 1 - samplesAgo;
@@ -88,7 +89,7 @@ namespace cdaw
                 const float stored = data[(size_t) write];      // the oldest sample: delayed by the full length
                 const float y = stored - g * x;
                 data[(size_t) write] = x + g * stored;
-                write = (write + 1) % (int) data.size();
+                advance();
                 return y;
             }
 

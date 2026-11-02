@@ -24,6 +24,7 @@ namespace cdaw
         const float sidechainGain = juce::Decibels::decibelsToGain (s.sidechainDb);
         const double attack = std::exp (-1.0 / (juce::jmax (0.05, (double) s.attackMs) * 0.001 * sampleRate));
         const double release = std::exp (-1.0 / (juce::jmax (1.0, (double) s.releaseMs) * 0.001 * sampleRate));
+        const float gainWithoutReduction = (float) std::pow (10.0, makeUpDb / 20.0);
 
         sidechainActive.store (key != nullptr, std::memory_order_relaxed);
 
@@ -54,7 +55,8 @@ namespace cdaw
                 envelopeDb = 0.0;
 
             mostReduction = juce::jmin (mostReduction, envelopeDb);
-            const float gain = (float) std::pow (10.0, (envelopeDb + makeUpDb) / 20.0);
+            const float gain = juce::exactlyEqual (envelopeDb, 0.0) ? gainWithoutReduction
+                                                                    : (float) std::pow (10.0, (envelopeDb + makeUpDb) / 20.0);
 
             left[i] = l * gain;
             outPeak[0] = juce::jmax (outPeak[0], std::abs (left[i]));

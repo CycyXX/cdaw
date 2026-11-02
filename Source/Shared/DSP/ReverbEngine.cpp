@@ -236,6 +236,10 @@ namespace cdaw
             float* early = ch == 0 ? wetL : wetR;
             auto& preDelayed = preDelayLine[ch];
 
+            int tapOffset[numTaps];
+            for (int t = 0; t < numTaps; ++t)
+                tapOffset[t] = preDelaySamples + (int) (tapMs[ch][t] * taps);
+
             for (int s = 0; s < n; ++s)
             {
                 float x = dry[s];
@@ -248,7 +252,7 @@ namespace cdaw
                 {
                     float g = 1.0f;
                     for (int t = 0; t < numTaps; ++t, g *= 0.8f)
-                        reflections += ((t & 1) ? -g : g) * preDelayed.read (preDelaySamples + (int) (tapMs[ch][t] * taps));
+                        reflections += ((t & 1) ? -g : g) * preDelayed.read (tapOffset[t]);
                 }
                 early[s] = reflections * earlyLevel * 0.45f;
 
