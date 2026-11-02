@@ -1,5 +1,6 @@
 #include "TestEngine.h"
 #include "Model/TempoOps.h"
+#include "Plugins/DelayPlugin.h"
 
 namespace cdaw::test
 {
@@ -59,6 +60,47 @@ namespace cdaw::test
                     const auto back = seconds (at (shown.toRawUTF8()));
                     expectWithinAbsoluteError (back, t, 0.5 / 960.0 + 1.0e-6, shown);
                 }
+            }
+
+            beginTest ("Plugins read the tempo without touching the model, as they run on audio threads");
+            {
+                auto edit = te::test_utilities::createTestEdit (engine, 1);
+                auto& ts = edit->tempoSequence;
+                ts.getTempo (0)->setBpm (120.0);
+                TempoOps::setTempoAt (*edit, te::TimePosition::fromSeconds (4.0), 60.0);
+                ts.getBpmAt ({});   // applies the changes, as the message thread soon would
+
+                auto plugin = edit->getPluginCache().createNewPlugin (DelayPlugin::xmlTypeName, {});
+                te::getAudioTracks (*edit)[0]->pluginList.insertPlugin (plugin, 0, nullptr);
+                auto delay = dynamic_cast<DelayPlugin*> (plugin.get());
+                expect (delay != nullptr);
+
+                juce::AudioBuffer<float> buffer (2, 128);
+
+                auto contextAt = [&] (double seconds)
+                {
+                    const auto start = te::TimePosition::fromSeconds (seconds);
+                    return te::PluginRenderContext (&buffer, 0, 128, nullptr, 0.0,
+                                                    { start, start + te::TimeDuration::fromSeconds (128.0 / 48000.0) },
+                                                    true, false, false, false);
+                };
+
+                // The same answers as asking the sequence, on either side of the change.
+                for (double seconds : { 0.0, 1.0, 3.99, 4.0, 4.5, 30.0 })
+                {
+                    const auto time = te::TimePosition::fromSeconds (seconds);
+                    expectWithinAbsoluteError (delay->getBpm (contextAt (seconds)), ts.getBpmAt (time), 1.0e-9);
+                    expectWithinAbsoluteError (delay->getSongPosition (contextAt (seconds)).beats, ts.toBeats (time).inBeats(), 1.0e-9);
+                }
+
+                // A change still waiting to be applied isn't applied by the plugin: that would
+                // allocate and take the audio callback lock on an audio thread. (Changing the tree
+                // is what undo does; setBpm applies it at once.)
+                ts.getTempo (0)->state.setProperty (te::IDs::bpm, 90.0, nullptr);
+                expectWithinAbsoluteError (delay->getBpm (contextAt (1.0)), 120.0, 1.0e-9, "The plugin applied the tempo change itself");
+
+                ts.getBpmAt ({});
+                expectWithinAbsoluteError (delay->getBpm (contextAt (1.0)), 90.0, 1.0e-9, "The plugin didn't get the new tempo");
             }
 
             beginTest ("Markers and navigation");

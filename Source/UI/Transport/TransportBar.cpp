@@ -211,12 +211,17 @@ namespace cdaw
         tempoField.setColour (juce::Label::backgroundColourId, Palette::laneBackground);
         tempoField.setColour (juce::Label::outlineColourId, Palette::panelOutline);
         tempoField.setTooltip ("Tempo (BPM) at the playhead. Drag up/down or double-click to type.");
-        tempoField.onDragStart = [this] { edit.getUndoManager().beginNewTransaction ("Change tempo"); };
+        tempoField.onDragStart = [this]
+        {
+            edit.getUndoManager().beginNewTransaction ("Change tempo");
+            tempoDragInhibitor = std::make_unique<te::TransportControl::ReallocationInhibitor> (edit.getTransport());
+        };
         tempoField.onDragDelta = [this] (double delta)
         {
             auto& tempo = edit.tempoSequence.getTempoAt (edit.getTransport().getPosition());
             tempo.setBpm (juce::jlimit (20.0, 400.0, tempo.getBpm() + delta));
         };
+        tempoField.onDragEnd = [this] { tempoDragInhibitor.reset(); };
         tempoField.onTextChange = [this]
         {
             auto bpm = tempoField.getText().getDoubleValue();

@@ -29,14 +29,21 @@ namespace cdaw
 
     double SharedEffectPlugin::getBpm (const te::PluginRenderContext& fc) const
     {
-        // As Tracktion's own external plugins do for their play head.
-        return edit.tempoSequence.getBpmAt (fc.editTime.getStart());
+        // Runs on audio threads, so through a Position, as Tracktion's external plugins do for their
+        // play head. TempoSequence::getBpmAt and toBeats would apply a pending tempo change right
+        // here: that allocates and takes the audio callback lock, which the callback holds while it
+        // waits for this thread.
+        auto position = te::createPosition (edit.tempoSequence);
+        position.set (fc.editTime.getStart());
+        return position.getTempo();
     }
 
     TempoSync::SongPosition SharedEffectPlugin::getSongPosition (const te::PluginRenderContext& fc) const
     {
         const auto time = fc.editTime.getStart();
-        return { fc.isPlaying || fc.isRendering, time.inSeconds(), edit.tempoSequence.toBeats (time).inBeats() };
+        auto position = te::createPosition (edit.tempoSequence);
+        position.set (time);
+        return { fc.isPlaying || fc.isRendering, time.inSeconds(), position.getBeats().inBeats() };
     }
 
     double SharedEffectPlugin::getBpmNow() const

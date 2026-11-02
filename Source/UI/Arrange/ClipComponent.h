@@ -55,8 +55,8 @@ namespace cdaw
         void showFadeMenu (bool fadeIn);
 
         void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override;
-        void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override        { repaint(); }
-        void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int) override { repaint(); }
+        void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override        { takesLabelIsCurrent = false; repaint(); }
+        void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int) override { takesLabelIsCurrent = false; repaint(); }
         void changeListenerCallback (juce::ChangeBroadcaster*) override;   // selection: repaint only when ours flips
 
         ArrangeHost& host;
@@ -64,6 +64,10 @@ namespace cdaw
         te::Clip::Ptr clip;
         std::unique_ptr<te::SmartThumbnail> thumbnail;
         juce::File thumbnailFile;
+
+        // "[take 2/5]": reading the takes is too slow to do on every paint.
+        juce::String takesLabel;
+        bool takesLabelIsCurrent = false;
 
         Zone dragZone = Zone::body, hoverZone = Zone::body;
         bool lastSelected = false;

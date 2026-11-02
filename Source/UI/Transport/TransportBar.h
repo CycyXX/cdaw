@@ -92,5 +92,8 @@ namespace cdaw
         juce::ComboBox gridBox;
         bool triggerRefresh = false;
         double lastShownPosition = -1.0, lastShownZoom = -1.0;
+
+        // Held while the tempo is dragged: each change would rebuild the whole audio graph.
+        std::unique_ptr<te::TransportControl::ReallocationInhibitor> tempoDragInhibitor;
     };
 }

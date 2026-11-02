@@ -408,6 +408,8 @@ namespace cdaw
             if (grabbed == nullptr || originals.empty())
                 return;
 
+            owner.holdGraphDuringDrag();
+
             const Original* grabbedOrig = nullptr;
             for (auto& o : originals)
                 if (o.note == grabbed)
@@ -480,6 +482,7 @@ namespace cdaw
             band = {};
             grabbed = nullptr;
             originals.clear();
+            owner.dragInhibitor.reset();
 
             if (auto at = dynamic_cast<te::AudioTrack*> (owner.clip->getTrack()))
                 at->turnOffGuideNotes();
@@ -573,7 +576,13 @@ namespace cdaw
         void mouseDown (const juce::MouseEvent& e) override
         {
             owner.edit.getUndoManager().beginNewTransaction ("Change velocity");
+            owner.holdGraphDuringDrag();
             mouseDrag (e);
+        }
+
+        void mouseUp (const juce::MouseEvent&) override
+        {
+            owner.dragInhibitor.reset();
         }
 
         void mouseDrag (const juce::MouseEvent& e) override
@@ -600,6 +609,12 @@ namespace cdaw
     };
 
     //==============================================================================
+    void PianoRoll::holdGraphDuringDrag()
+    {
+        if (dragInhibitor == nullptr)
+            dragInhibitor = std::make_unique<te::TransportControl::ReallocationInhibitor> (edit.getTransport());
+    }
+
     PianoRoll::PianoRoll (EditViewState& vs, te::MidiClip::Ptr c)
         : viewState (vs), edit (vs.edit), clip (c)
     {

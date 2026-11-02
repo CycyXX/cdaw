@@ -61,6 +61,11 @@ namespace cdaw
         juce::Array<te::MidiNote*> selected;
         int lastVelocity = 100;
 
+        // Held while notes are dragged: each change would rebuild the whole audio graph, so the
+        // changes are heard once the mouse is released (as with clip trims and fades).
+        std::unique_ptr<te::TransportControl::ReallocationInhibitor> dragInhibitor;
+        void holdGraphDuringDrag();
+
         std::unique_ptr<juce::Component> keys, grid, velocity, ruler;
         juce::Label titleLabel;
         juce::TextButton quantizeButton { "Quantize" }, drumModeButton, keyButton, keySnapButton { "Snap to Key" };

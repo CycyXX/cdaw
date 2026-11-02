@@ -259,7 +259,9 @@ namespace cdaw
 
         // Check the file can be read before closing the current project, so a damaged file
         // doesn't leave an empty window behind.
-        if (! ProjectSession::isReadable (ctx.engine(), editFile, recoverFrom))
+        juce::ValueTree stateRead;
+
+        if (! ProjectSession::isReadable (ctx.engine(), editFile, recoverFrom, &stateRead))
         {
             auto backups = editFile.getParentDirectory().getChildFile ("Backups");
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Open Project",
@@ -277,7 +279,7 @@ namespace cdaw
         ClipOps::cancelRunningImport();
         ctx.session.reset();
 
-        auto session = std::make_unique<ProjectSession> (ctx.engine(), editFile, recoverFrom);
+        auto session = std::make_unique<ProjectSession> (ctx.engine(), editFile, recoverFrom, stateRead);
 
         if (! session->isValid())
         {

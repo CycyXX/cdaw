@@ -49,6 +49,7 @@ namespace cdaw
         if (v == clip->state && (id == te::IDs::source || id == te::IDs::currentTake || id == te::IDs::isReversed))
             updateThumbnail();
 
+        takesLabelIsCurrent = false;
         repaint();
     }
 
@@ -100,8 +101,16 @@ namespace cdaw
         g.setFont (juce::FontOptions (11.5f));
         auto label = clip->getName();
 
-        if (CompOps::hasTakes (*clip))
-            label << "   [take " << (CompOps::getActiveTake (*clip) + 1) << "/" << CompOps::getNumTakes (*clip) << "]";
+        if (! takesLabelIsCurrent)
+        {
+            takesLabel = CompOps::hasTakes (*clip)
+                            ? "   [take " + juce::String (CompOps::getActiveTake (*clip) + 1) + "/" + juce::String (CompOps::getNumTakes (*clip)) + "]"
+                            : juce::String();
+            takesLabelIsCurrent = true;
+        }
+
+        label << takesLabel;
+
         if (clip->isLooping())
             label << "   (loop)";
         if (muted)
@@ -756,7 +765,9 @@ namespace cdaw
             }
         }
 
-        repaint();
+        // A body drag only moves the ghosts on the overlay.
+        if (dragZone != Zone::body)
+            repaint();
     }
 
     void ClipComponent::mouseUp (const juce::MouseEvent& e)

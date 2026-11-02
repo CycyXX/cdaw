@@ -26,8 +26,10 @@ namespace cdaw
         static juce::String getProjectFilePattern()     { return "*.cdaw;*.tracktionedit"; }
 
         /** Opens an existing project file, or creates a new project if the file doesn't exist.
-            If recoverFrom is given (an autosave), the project is loaded from it instead and marked unsaved. */
-        ProjectSession (te::Engine&, const juce::File& editFile, const juce::File& recoverFrom = {});
+            If recoverFrom is given (an autosave), the project is loaded from it instead and marked unsaved.
+            alreadyRead is what isReadable just read, to save reading it again. */
+        ProjectSession (te::Engine&, const juce::File& editFile, const juce::File& recoverFrom = {},
+                        const juce::ValueTree& alreadyRead = {});
 
         /** The autosave sibling (.tmp_<Name>) if it's newer than the project file. */
         static juce::File findNewerAutosave (const juce::File& editFile);
@@ -71,7 +73,8 @@ namespace cdaw
             project's own folder, beside that folder rather than nested in it. */
         static juce::File resolveSaveAsTarget (const juce::File& chosen);
 
-        static bool isReadable (te::Engine&, const juce::File& editFile, const juce::File& recoverFrom = {});
+        static bool isReadable (te::Engine&, const juce::File& editFile, const juce::File& recoverFrom = {},
+                                juce::ValueTree* stateRead = nullptr);
 
         /** Saves to the edit file and writes a rotating backup. */
         bool save();
@@ -100,6 +103,19 @@ namespace cdaw
         te::SelectionManager selectionManager { engine };
         std::unique_ptr<EditViewState> viewState;
         std::unique_ptr<MasterAnalyser> analyser;
+
+        // Kept for as long as the project stays at this path. Tracktion's file writer lives only as
+        // long as something uses it and finishes its work before it goes, so a temporary one holds up
+        // the message thread until the autosave is on disk.
+        std::unique_ptr<te::EditFileOperations> fileOperations;
+        te::EditFileOperations& getFileOperations();
+
+        // Which of Tracktion's two styles each relative path turned out to be (see
+        // resolveRelativePath). Painting asks for source files, so this keeps the disk out of it.
+        enum class PathStyle { fromFolder, fromFile };
+        std::map<juce::String, PathStyle> pathStyles;
+        juce::CriticalSection pathStylesLock;
+        juce::File resolvePath (const juce::String&);
 
         void timerCallback() override           { autosave(); }
 

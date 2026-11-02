@@ -22,12 +22,41 @@ namespace cdaw
         return path.startsWith ("..") ? fromFile : fromFolder;
     }
 
+    juce::File ProjectSession::resolvePath (const juce::String& path)
+    {
+        if (juce::File::isAbsolutePath (path))
+            return juce::File (path);
+
+        auto fromFolder = editFile.getParentDirectory().getChildFile (path);
+        auto fromFile = editFile.getChildFile (path);
+        const juce::ScopedLock sl (pathStylesLock);
+
+        // The style doesn't change while the project is open, so a file that has since gone is
+        // still returned where it was, and is found to be missing there.
+        if (auto known = pathStyles.find (path); known != pathStyles.end())
+            return known->second == PathStyle::fromFolder ? fromFolder : fromFile;
+
+        if (fromFolder.exists())
+        {
+            pathStyles[path] = PathStyle::fromFolder;
+            return fromFolder;
+        }
+
+        if (fromFile.exists())
+        {
+            pathStyles[path] = PathStyle::fromFile;
+            return fromFile;
+        }
+
+        return path.startsWith ("..") ? fromFile : fromFolder;
+    }
+
     bool ProjectSession::isProjectFile (const juce::File& f)
     {
         return f.hasFileExtension (projectFileSuffix) || f.hasFileExtension (legacyProjectFileSuffix);
     }
 
-    ProjectSession::ProjectSession (te::Engine& e, const juce::File& file, const juce::File& recoverFrom)
+    ProjectSession::ProjectSession (te::Engine& e, const juce::File& file, const juce::File& recoverFrom, const juce::ValueTree& alreadyRead)
         : engine (e), editFile (file.withFileExtension (projectFileSuffix))
     {
         // An old .tracktionedit is read once and continues life as <Name>.cdaw. If both exist,
@@ -41,7 +70,9 @@ namespace cdaw
 
         juce::ValueTree state;
 
-        if (recovering)
+        if (alreadyRead.isValid())
+            state = alreadyRead;
+        else if (recovering)
             state = te::loadEditFromFile (engine, recoverFrom, te::ProjectItemID::createNewID ({}));
         else if (isNew)
             state = te::createEmptyEdit (engine);
@@ -73,7 +104,7 @@ namespace cdaw
         // doesn't use.
         options.filePathResolver = [this] (const juce::String& path) -> juce::File
         {
-            return resolveRelativePath (editFile, path);
+            return resolvePath (path);
         };
         options.numAudioTracks = isNew ? 1 : 0;
 
@@ -133,7 +164,16 @@ namespace cdaw
             selectionManager.deselectAll();
         }
 
+        fileOperations.reset();
         edit.reset();
+    }
+
+    te::EditFileOperations& ProjectSession::getFileOperations()
+    {
+        if (fileOperations == nullptr)
+            fileOperations = std::make_unique<te::EditFileOperations> (*edit);
+
+        return *fileOperations;
     }
 
     void ProjectSession::recordingAboutToStop (te::InputDeviceInstance& in, te::EditItemID)
@@ -168,7 +208,7 @@ namespace cdaw
         return true;
     }
 
-    bool ProjectSession::isReadable (te::Engine& engine, const juce::File& file, const juce::File& recoverFrom)
+    bool ProjectSession::isReadable (te::Engine& engine, const juce::File& file, const juce::File& recoverFrom, juce::ValueTree* stateRead)
     {
         auto cdawFile = file.withFileExtension (projectFileSuffix);
         auto source = recoverFrom.existsAsFile() ? recoverFrom
@@ -178,7 +218,12 @@ namespace cdaw
         if (! source.existsAsFile())
             return true;
 
-        return te::loadEditFromFile (engine, source, te::ProjectItemID::createNewID ({})).isValid();
+        auto state = te::loadEditFromFile (engine, source, te::ProjectItemID::createNewID ({}));
+
+        if (stateRead != nullptr)
+            *stateRead = state;
+
+        return state.isValid();
     }
 
     void ProjectSession::configureEdit (bool isNew)
@@ -223,7 +268,7 @@ namespace cdaw
         ensureFolders();
         writeBackup();
 
-        te::EditFileOperations ops (*edit);
+        auto& ops = getFileOperations();
         bool ok = ops.writeToFile (editFile, false);
 
         if (ok)
@@ -247,7 +292,14 @@ namespace cdaw
         // the new location. Existing audio stays where it is; new recordings go to the
         // new project's Audio folder.
         te::convertAllSourcePaths (*edit, false);
+        fileOperations.reset();
         editFile = newEditFile.withFileExtension (projectFileSuffix);
+
+        {
+            const juce::ScopedLock sl (pathStylesLock);
+            pathStyles.clear();
+        }
+
         ensureFolders();
         edit->setTempDirectory (getProjectFolder().getChildFile ("Cache"));
         te::convertAllSourcePaths (*edit, true);
@@ -284,7 +336,7 @@ namespace cdaw
             return;
 
         if (edit->hasChangedSinceSaved())
-            te::EditFileOperations (*edit).saveTempVersion (false);
+            getFileOperations().saveTempVersion (false);
     }
 
     void ProjectSession::writeBackup()
@@ -332,10 +384,10 @@ namespace cdaw
 
     void ProjectSession::discardAutosave()
     {
-        if (edit != nullptr)
-            te::EditFileOperations (*edit).deleteTempVersion();
-        else
-            te::EditFileOperations::getTempVersionOfEditFile (editFile).deleteFile();
+        // Letting go of the file writer waits for it, so an autosave still being written can't
+        // bring the file back afterwards.
+        fileOperations.reset();
+        te::EditFileOperations::getTempVersionOfEditFile (editFile).deleteFile();
     }
 
     juce::File ProjectSession::resolveSaveAsTarget (const juce::File& chosen)

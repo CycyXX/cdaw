@@ -18,7 +18,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\build.ps1" -Target 
 if errorlevel 1 ( echo. & echo C-FILTER VST3 BUILD FAILED & pause & exit /b 1 )
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\build.ps1" -Target CDist_VST3
 if errorlevel 1 ( echo. & echo C-DIST VST3 BUILD FAILED & pause & exit /b 1 )
-powershell -NoProfile -ExecutionPolicy Bypass -File "scriptsuild.ps1" -Target CEsser_VST3
+powershell -NoProfile -ExecutionPolicy Bypass -File "scriptsbuild.ps1" -Target CEsser_VST3
 if errorlevel 1 ( echo. & echo C-ESSER VST3 BUILD FAILED & pause & exit /b 1 )
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\build.ps1" -Target CSynth_VST3
 if errorlevel 1 ( echo. & echo C-SYNTH VST3 BUILD FAILED & pause & exit /b 1 )
