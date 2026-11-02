@@ -281,6 +281,8 @@ namespace cdaw::test
                 juce::MidiBuffer midi;
                 double phase = 0.0;
                 int blockCount = 0;
+                const auto blockTime = std::chrono::microseconds ((juce::int64) (params.blockSize * 1.0e6 / params.sampleRate));
+                auto nextBlock = std::chrono::steady_clock::now();
 
                 while (! stop)
                 {
@@ -298,7 +300,11 @@ namespace cdaw::test
                     ++blockCount;
                     io.processBlock (block, midi);
                     samplesFed += params.blockSize;
-                    std::this_thread::sleep_for (std::chrono::milliseconds (2));
+
+                    // At the rate a real interface runs: a short sleep is 2 ms or 15 ms depending on
+                    // what else is running, and recordings came out wrong far from real time.
+                    nextBlock += blockTime;
+                    std::this_thread::sleep_until (nextBlock);
                 }
             });
 
@@ -372,6 +378,11 @@ namespace cdaw::test
                 expect (wave != nullptr);
                 wave->setMergeMode (replaceMode);   // as CDAWEngine::applyRecordingDefaults sets it
 
+                // Assigning an input rebuilds the device list a moment later. A recording that starts
+                // before that writes only a few blocks to the input being replaced.
+                dm.dispatchPendingUpdates();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+
                 beginTest ("Recording audio over a clip: both passes stay, the new one plays");
                 {
                     record (transport, 0.0, 2.0);
@@ -379,7 +390,9 @@ namespace cdaw::test
                     expect (! CompOps::hasTakes (*track->getClips()[0]));
                     expect (wave->getMergeMode() == replaceMode, "Back to replace after the recording");
                     auto firstLength = track->getClips()[0]->getPosition().getLength().inSeconds();
-                    expect (firstLength > 1.0);
+                    expect (firstLength > 1.0, "The first pass is " + juce::String (firstLength, 3) + " s long, starting at "
+                                                 + juce::String (track->getClips()[0]->getPosition().getStart().inSeconds(), 3)
+                                                 + ", the transport now at " + juce::String (transport.getPosition().inSeconds(), 3));
 
                     record (transport, 0.5, 0.4);
                     expectEquals (track->getClips().size(), 3, "The old pass either side of the new one");
