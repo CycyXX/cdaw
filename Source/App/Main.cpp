@@ -86,6 +86,12 @@ namespace cdaw
 
             auto& main = context->mainWindow->getMainComponent();
 
+            // The splash's last stretch follows the project opening, plugin by plugin.
+            main.onOpenProgressWhileHidden = [this] (const juce::String& text, double progress)
+            {
+                step (text, 0.70 + 0.28 * progress);
+            };
+
             // Open the file given on the command line, else the last project, else a fresh one.
             auto argFile = juce::File::getCurrentWorkingDirectory().getChildFile (commandLine.trim().unquoted());
             auto last = juce::File (context->settings.getString (SettingKeys::lastProject));
@@ -111,6 +117,7 @@ namespace cdaw
                     context->session->save();
             }
 
+            main.onOpenProgressWhileHidden = nullptr;
             FileAssociation::registerIfNeeded();
 
             step ("Ready", 1.0);

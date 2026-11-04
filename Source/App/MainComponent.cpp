@@ -264,10 +264,12 @@ namespace cdaw
         if (isShowing())
             loadWindow = std::make_unique<ProjectLoadWindow> (editFile.getFileNameWithoutExtension(), *this);
 
-        auto showStep = [&loadWindow] (const juce::String& text, double progress)
+        auto showStep = [this, &loadWindow] (const juce::String& text, double progress)
         {
             if (loadWindow != nullptr)
                 loadWindow->setStep (text, progress);
+            else if (onOpenProgressWhileHidden)
+                onOpenProgressWhileHidden (text, progress);
         };
 
         showStep ("Reading the project", 0.03);

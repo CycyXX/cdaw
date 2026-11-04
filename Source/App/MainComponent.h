@@ -33,6 +33,11 @@ namespace cdaw
         void confirmDiscardOrSave (std::function<void (bool)> onDone);
 
         void openProject (const juce::File& editFile, const juce::File& recoverFrom = {});
+
+        /** Told how opening a project is going (0..1) while this window isn't showing, as at
+            startup. Once it's showing, openProject shows its own progress window. */
+        std::function<void (const juce::String& step, double progress)> onOpenProgressWhileHidden;
+
         /** Tells the user about audio files and plugins the open project can't find (and offers to
             reconnect them). Call once the window is showing. */
         void checkProjectHealth();
