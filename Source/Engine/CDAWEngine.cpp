@@ -76,6 +76,16 @@ namespace cdaw
         return juce::jmax (1, juce::SystemStats::getNumCpus() - 1);
     }
 
+    bool CDAWEngineBehaviour::shouldLoadPlugin (te::ExternalPlugin& plugin)
+    {
+        const bool shouldLoad = te::EngineBehaviour::shouldLoadPlugin (plugin);
+
+        if (shouldLoad && onLoadingPlugin)
+            onLoadingPlugin (plugin.getName());
+
+        return shouldLoad;
+    }
+
     void CDAWEngineBehaviour::newClipCreated (te::Clip& clip, bool)
     {
         if (auto track = clip.getTrack())
@@ -168,6 +178,8 @@ namespace cdaw
     {
         auto ui = std::make_unique<CDAWUIBehaviour>();
         uiBehaviour = ui.get();
+        auto behaviour = std::make_unique<CDAWEngineBehaviour> (settings);
+        engineBehaviour = behaviour.get();
 
         // Developer override for measurements (CDAW_DEBUG_POOL=<tracktion::graph::ThreadPoolStrategy>).
         if (auto pool = juce::SystemStats::getEnvironmentVariable ("CDAW_DEBUG_POOL", {}); pool.isNotEmpty())
@@ -175,7 +187,7 @@ namespace cdaw
 
         engine = std::make_unique<te::Engine> (std::make_unique<te::PropertyStorage> ("CDAW"),
                                                std::move (ui),
-                                               std::make_unique<CDAWEngineBehaviour> (settings));
+                                               std::move (behaviour));
 
         // Register filtered device types, then open the saved device (falling back safely).
         registerAudioDeviceTypes (engine->getDeviceManager().deviceManager);

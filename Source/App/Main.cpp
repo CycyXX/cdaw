@@ -203,6 +203,7 @@ namespace cdaw
 
         /** Developer aids, only active when the environment variables are set:
             CDAW_DEBUG_IMPORT=<file>  imports the file at bar 1 the same way a drag-and-drop does.
+            CDAW_DEBUG_OPEN=<file>    switches to this project after 5 s, as File > Open does.
             CDAW_DEBUG_CUBASE=<file.cpr>  imports the Cubase project as a new project, as File > Import Cubase Project does
                                       (CDAW_DEBUG_CUBASE_SIMILAR=1: matching similar plugins too).
             CDAW_DEBUG_AUTOPLAY=1     presses play 0.5 s after start and logs the transport state for 6 s.
@@ -266,6 +267,13 @@ namespace cdaw
                     const bool similar = juce::SystemStats::getEnvironmentVariable ("CDAW_DEBUG_CUBASE_SIMILAR", {}) == "1";
                     if (context != nullptr && context->mainWindow != nullptr)
                         context->mainWindow->getMainComponent().importCubaseProject (juce::File (cpr), similar);
+                });
+
+            if (auto toOpen = juce::SystemStats::getEnvironmentVariable ("CDAW_DEBUG_OPEN", {}); toOpen.isNotEmpty())
+                juce::Timer::callAfterDelay (5000, [this, toOpen]
+                {
+                    if (context != nullptr && context->mainWindow != nullptr)
+                        context->mainWindow->getMainComponent().openProjectChecked (juce::File (toOpen));
                 });
 
             auto importPath = juce::SystemStats::getEnvironmentVariable ("CDAW_DEBUG_IMPORT", {});

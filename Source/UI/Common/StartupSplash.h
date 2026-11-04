@@ -19,6 +19,9 @@ namespace cdaw
 
         void paint (juce::Graphics&) override;
 
+        /** The bar, for the other windows that show progress while the message thread is blocked. */
+        static void drawProgressBar (juce::Graphics&, juce::Rectangle<float> bar, double progress);
+
     private:
         juce::Image logo;
         juce::String version, step;

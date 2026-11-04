@@ -21,6 +21,7 @@
 #include "../Plugins/LeadPlugin.h"
 #include "../Plugins/SynthPlugin.h"
 #include "../UI/Common/ProgressWindow.h"
+#include "../UI/Common/ProjectLoadWindow.h"
 #include "../UI/Common/StatusBar.h"
 #include "../UI/LookAndFeel/Palette.h"
 #include "../UI/Transport/TransportBar.h"
@@ -257,6 +258,20 @@ namespace cdaw
     {
         auto& ctx = AppContext::get();
 
+        // (At startup the window isn't showing yet: the splash shows progress instead.)
+        std::unique_ptr<ProjectLoadWindow> loadWindow;
+
+        if (isShowing())
+            loadWindow = std::make_unique<ProjectLoadWindow> (editFile.getFileNameWithoutExtension(), *this);
+
+        auto showStep = [&loadWindow] (const juce::String& text, double progress)
+        {
+            if (loadWindow != nullptr)
+                loadWindow->setStep (text, progress);
+        };
+
+        showStep ("Reading the project", 0.03);
+
         // Check the file can be read before closing the current project, so a damaged file
         // doesn't leave an empty window behind.
         juce::ValueTree stateRead;
@@ -272,6 +287,9 @@ namespace cdaw
             return;
         }
 
+        if (ctx.session != nullptr)
+            showStep ("Closing " + ctx.session->getName(), 0.08);
+
         inspector.reset();
         lowerZone.reset();
         arrangeView.reset();
@@ -279,7 +297,26 @@ namespace cdaw
         ClipOps::cancelRunningImport();
         ctx.session.reset();
 
-        auto session = std::make_unique<ProjectSession> (ctx.engine(), editFile, recoverFrom, stateRead);
+        // Most of the wait is usually the third-party plugins loading, one after another.
+        constexpr double pluginsFrom = 0.15, pluginsTo = 0.8;
+        const int numPlugins = ProjectSession::countExternalPlugins (stateRead);
+        int pluginsStarted = 0;
+
+        showStep (numPlugins > 0 ? "Loading plugins" : "Loading tracks", pluginsFrom);
+
+        std::unique_ptr<ProjectSession> session;
+
+        {
+            const juce::ScopedValueSetter<std::function<void (const juce::String&)>> reportPlugins (ctx.engineHost.getBehaviour().onLoadingPlugin,
+                [&] (const juce::String& pluginName)
+                {
+                    showStep ("Loading plugin " + juce::String (juce::jmin (++pluginsStarted, numPlugins)) + " of " + juce::String (numPlugins) + ": " + pluginName,
+                              pluginsFrom + (pluginsTo - pluginsFrom) * (pluginsStarted - 1) / juce::jmax (1, numPlugins));
+                });
+
+            session = std::make_unique<ProjectSession> (ctx.engine(), editFile, recoverFrom, stateRead,
+                                                        [&showStep, pluginsTo] { showStep ("Preparing the audio", pluginsTo); });
+        }
 
         if (! session->isValid())
         {
@@ -305,6 +342,7 @@ namespace cdaw
                                                  { if (safe != nullptr) safe->checkProjectHealth(); });
         }
 
+        showStep ("Building the display", 0.92);
         sessionChanged();
     }
 

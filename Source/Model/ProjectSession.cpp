@@ -56,7 +56,19 @@ namespace cdaw
         return f.hasFileExtension (projectFileSuffix) || f.hasFileExtension (legacyProjectFileSuffix);
     }
 
-    ProjectSession::ProjectSession (te::Engine& e, const juce::File& file, const juce::File& recoverFrom, const juce::ValueTree& alreadyRead)
+    int ProjectSession::countExternalPlugins (const juce::ValueTree& projectState)
+    {
+        int count = projectState.hasType (te::IDs::PLUGIN)
+                     && projectState[te::IDs::type].toString() == te::ExternalPlugin::xmlTypeName ? 1 : 0;
+
+        for (const auto& child : projectState)
+            count += countExternalPlugins (child);
+
+        return count;
+    }
+
+    ProjectSession::ProjectSession (te::Engine& e, const juce::File& file, const juce::File& recoverFrom, const juce::ValueTree& alreadyRead,
+                                    const std::function<void()>& onPluginsLoaded)
         : engine (e), editFile (file.withFileExtension (projectFileSuffix))
     {
         // An old .tracktionedit is read once and continues life as <Name>.cdaw. If both exist,
@@ -112,6 +124,9 @@ namespace cdaw
 
         if (edit != nullptr)
         {
+            if (onPluginsLoaded)
+                onPluginsLoaded();
+
             // Audio that moved (a moved or renamed project folder, an old Save As): look for it by
             // name in the project's Audio folder first, then the rest of the project folder.
             if (! isNew)

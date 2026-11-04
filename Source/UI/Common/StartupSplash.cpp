@@ -66,6 +66,11 @@ namespace cdaw
         g.setFont (juce::FontOptions (14.0f));
         g.drawText (progress < 1.0 ? step + juce::String::fromUTF8 ("\xe2\x80\xa6") : step, content.removeFromBottom (20), juce::Justification::bottomLeft, true);
 
+        drawProgressBar (g, bar, progress);
+    }
+
+    void StartupSplash::drawProgressBar (juce::Graphics& g, juce::Rectangle<float> bar, double progress)
+    {
         g.setColour (Palette::panelRaised);
         g.fillRoundedRectangle (bar, 4.0f);
 

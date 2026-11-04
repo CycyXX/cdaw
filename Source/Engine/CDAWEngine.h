@@ -39,6 +39,10 @@ namespace cdaw
         bool muteTrackContentsWhilstRecording() override                { return muteOldTakesWhilstRecording; }
         static inline bool muteOldTakesWhilstRecording = true;
 
+        /** Told the name of each third-party plugin as it's about to load, for showing progress. */
+        std::function<void (const juce::String& pluginName)> onLoadingPlugin;
+        bool shouldLoadPlugin (te::ExternalPlugin&) override;
+
     private:
         AppSettings& settings;
     };
@@ -75,6 +79,7 @@ namespace cdaw
 
         te::Engine& get()                       { return *engine; }
         CDAWUIBehaviour& getUI()                { return *uiBehaviour; }
+        CDAWEngineBehaviour& getBehaviour()     { return *engineBehaviour; }
 
         /** Applies CDAW's recording defaults to every audio input: WAV at the configured
             bit depth, "replace" merge mode (Tracktion would otherwise overlay new
@@ -86,6 +91,7 @@ namespace cdaw
 
         AppSettings& settings;
         CDAWUIBehaviour* uiBehaviour = nullptr;  // owned by the engine
+        CDAWEngineBehaviour* engineBehaviour = nullptr;  // likewise
         std::unique_ptr<te::Engine> engine;
     };
 }

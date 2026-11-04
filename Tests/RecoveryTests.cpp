@@ -104,6 +104,38 @@ namespace cdaw::test
                 expect (ProjectSession::findNewerAutosave (movedFile) == juce::File(), "Saving leaves no autosave");
             }
 
+            beginTest ("Opening reports when the plugins have loaded, and counts third-party plugins");
+            {
+                auto file = ProjectSession::createProjectFolder (dir, "Counted");
+
+                {
+                    ProjectSession s (engine, file);
+                    expect (s.save());
+                }
+
+                int reports = 0;
+                ProjectSession s (engine, file, {}, {}, [&reports] { ++reports; });
+                expectEquals (reports, 1);
+
+                juce::ValueTree project ("EDIT");
+                expectEquals (ProjectSession::countExternalPlugins (project), 0);
+
+                juce::ValueTree track ("TRACK"), rack ("RACK");
+                auto plugin = [] (const char* type)
+                {
+                    juce::ValueTree p (te::IDs::PLUGIN);
+                    p.setProperty (te::IDs::type, type, nullptr);
+                    return p;
+                };
+
+                track.appendChild (plugin ("volume"), nullptr);
+                track.appendChild (plugin (te::ExternalPlugin::xmlTypeName), nullptr);
+                rack.appendChild (plugin (te::ExternalPlugin::xmlTypeName), nullptr);
+                track.appendChild (rack, nullptr);
+                project.appendChild (track, nullptr);
+                expectEquals (ProjectSession::countExternalPlugins (project), 2);
+            }
+
             beginTest ("A source file that goes away while the project is open is found to be missing");
             {
                 auto file = ProjectSession::createProjectFolder (dir, "Vanishing");

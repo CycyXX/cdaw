@@ -27,9 +27,13 @@ namespace cdaw
 
         /** Opens an existing project file, or creates a new project if the file doesn't exist.
             If recoverFrom is given (an autosave), the project is loaded from it instead and marked unsaved.
-            alreadyRead is what isReadable just read, to save reading it again. */
+            alreadyRead is what isReadable just read, to save reading it again. onPluginsLoaded is
+            called between loading the plugins and preparing the audio, for showing progress. */
         ProjectSession (te::Engine&, const juce::File& editFile, const juce::File& recoverFrom = {},
-                        const juce::ValueTree& alreadyRead = {});
+                        const juce::ValueTree& alreadyRead = {}, const std::function<void()>& onPluginsLoaded = {});
+
+        /** How many third-party plugins a project's state holds, racks and clips included. */
+        static int countExternalPlugins (const juce::ValueTree& projectState);
 
         /** The autosave sibling (.tmp_<Name>) if it's newer than the project file. */
         static juce::File findNewerAutosave (const juce::File& editFile);
