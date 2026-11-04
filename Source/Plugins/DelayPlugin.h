@@ -1,8 +1,8 @@
 #pragma once
 
 #include "SharedEffectPlugin.h"
-#include "../Shared/DSP/DelayEngine.h"
-#include "../Shared/Delay/DelayParameters.h"
+#include "Shared/DSP/DelayEngine.h"
+#include "Shared/Delay/DelayParameters.h"
 
 namespace cdaw
 {

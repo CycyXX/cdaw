@@ -2,7 +2,7 @@
 
 #include "../../PCH.h"
 #include "../../Plugins/SharedEffectPlugin.h"
-#include "../../Shared/Common/EffectModel.h"
+#include "Shared/Common/EffectModel.h"
 #include "TeKnobParameter.h"
 
 namespace cdaw

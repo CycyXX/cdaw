@@ -1,5 +1,5 @@
 #include "TimeRuler.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../../Model/TempoOps.h"
 #include "../../Model/ArrangerOps.h"
 

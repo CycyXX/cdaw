@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../../PCH.h"
-#include "../../Shared/CVerb/CVerbView.h"
+#include "Shared/CVerb/CVerbView.h"
 
 namespace cdaw
 {

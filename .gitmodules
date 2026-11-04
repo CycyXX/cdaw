@@ -2,3 +2,7 @@
 	path = third_party/tracktion_engine
 	url = https://github.com/Tracktion/tracktion_engine.git
 	shallow = true
+[submodule "third_party/cdaw-plugins"]
+	path = third_party/cdaw-plugins
+	url = https://github.com/CycyXX/cdaw-plugins.git
+	shallow = true

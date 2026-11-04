@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../../PCH.h"
-#include "../../Shared/Compressor/CompressorView.h"
+#include "Shared/Compressor/CompressorView.h"
 
 namespace cdaw
 {

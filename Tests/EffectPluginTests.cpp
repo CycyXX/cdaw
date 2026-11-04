@@ -13,7 +13,7 @@
 #include "Shared/DSP/TempoSync.h"
 #include "Shared/Filter/FilterView.h"
 #include "Shared/Phaser/PhaserView.h"
-#include "UI/LookAndFeel/CDAWLookAndFeel.h"
+#include "Shared/LookAndFeel/CDAWLookAndFeel.h"
 #include "UI/Plugins/SharedEffectEditor.h"
 
 namespace cdaw::test
@@ -153,12 +153,7 @@ namespace cdaw::test
         /** A VST3 from this build tree (built or not). */
         static juce::File findVst3 (const juce::String& folder, const juce::String& bundle)
         {
-            // .../build/<preset>/Tests/CDAW_Tests_artefacts/<config>/CDAW_Tests.exe
-            auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-            auto config = exe.getParentDirectory();
-            auto preset = config.getParentDirectory().getParentDirectory().getParentDirectory();
-            return preset.getChildFile ("VST3/" + folder + "/" + folder + "_artefacts").getChildFile (config.getFileName())
-                         .getChildFile ("VST3/" + bundle + ".vst3");
+            return findPluginVst3 (folder, bundle);
         }
 
         struct Vst3Check

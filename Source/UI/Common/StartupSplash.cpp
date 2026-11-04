@@ -1,5 +1,5 @@
 #include "StartupSplash.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include <CDAWBinary.h>
 
 namespace cdaw

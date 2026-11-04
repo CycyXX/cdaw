@@ -102,6 +102,9 @@ $env:CDAW_MAKE_DEMO = "$env:USERPROFILE\Documents\CDAW Projects"
 
 ## Built-in effects
 
+The C- effects and synths are also plugins for any host, developed in their own repository:
+[cdaw-plugins](https://github.com/CycyXX/cdaw-plugins).
+
 | | |
 |---|---|
 | **EQ**: 8 bands (low / high cut at 6-48 dB/oct, shelves, peak, notch) drawn over a live spectrum. Drag a node for frequency and gain, mouse wheel for Q. | ![EQ](docs/images/eq.png) |
@@ -339,8 +342,11 @@ locked. C-Comp's sidechain is the host's sidechain input: route a source to it i
 switch Sidechain on in the plugin (the sidechain button). Synced delay times and LFOs follow the
 host's tempo and position.
 
-Each plugin's CDAW build and VST3 compile the same code in `Source\Shared`, so a change there
-applies to both:
+The plugins live in [cdaw-plugins](https://github.com/CycyXX/cdaw-plugins), which CDAW has as a
+submodule in `third_party\cdaw-plugins`. To change one, commit and push there first, then commit the
+new submodule version here. Each plugin's CDAW build and VST3 compile the same code in that
+repository's `Shared` folder, so a change there applies to both. The DSP, parameters, editor and
+VST3 glue below are in the submodule, and the CDAW glue is here:
 
 | | DSP | Parameters | Editor | CDAW glue | VST3 glue |
 |---|---|---|---|---|---|
@@ -361,7 +367,7 @@ The last eight share their glue: `SharedEffectPlugin` and `SharedEffectEditor` i
 controls in `Shared\UI\EffectWidgets`. A new effect of that kind needs only its engine, its
 parameter list, its view and a few lines of glue.
 
-A test per plugin loads the built VST3 and checks it produces the same audio as CDAW's. Parameter
+The engines' own tests are in the plugins' repository. Here, a test per plugin loads the built VST3 and checks it produces the same audio as CDAW's. Parameter
 IDs are saved in projects and presets: never change them (and never name one `type`, `id` or
 another property Tracktion keeps on a plugin; a test checks).
 
@@ -378,12 +384,11 @@ enable the MP3 option in the export dialog. CDAW doesn't include LAME.
 | `Source\Engine` | Tracktion Engine setup, audio devices, plugin windows, master analyser |
 | `Source\Model` | Project, tracks, clips, mixer, automation, tempo, arranger, DAWproject, Cubase import |
 | `Source\Plugins` | Built-in effects, C-Synth and C-Lead as Tracktion plugins |
-| `Source\Shared` | Code without Tracktion, shared with the VST3 builds: DSP, knobs and the views of the C- effects |
-| `Source\UI` | Arrangement, mixer, piano roll, inspector, plugin editors, look and feel |
-| `VST3\CVerb`, `VST3\CMulticomp`, `VST3\CComp`, `VST3\CDelay`, `VST3\CChorus`, `VST3\CPhaser`, `VST3\CFilter`, `VST3\CDist`, `VST3\CSynth`, `VST3\CLead` | The VST3s (host glue only); `VST3\Common` is what the last seven share |
+| `Source\UI` | Arrangement, mixer, piano roll, inspector, plugin editors |
 | `Tests` | Automated tests (`CDAW_Tests`, or `CDAW_Tests "<test name>"` for one); `CDAW_SNAPSHOTS=1` also renders the UI to PNGs (the new effects into `CDAW_SNAPSHOT_DIR` if set); `CDAW_CUBASE_CORPUS=<folder>` imports every Cubase project below it, `CDAW_CUBASE_DUMP=<file.cpr>` writes one's object tree |
 | `scripts` | Toolchain setup, bootstrap, build and publish |
 | `third_party\tracktion_engine` | Tracktion Engine and JUCE (git submodule) |
+| `third_party\cdaw-plugins` | The C- plugins, with the look and feel they share with CDAW (git submodule) |
 
 ## Updating Tracktion Engine
 

@@ -1,4 +1,4 @@
-# Fetches third-party sources: Tracktion Engine (pinned, shallow) and its nested JUCE submodule.
+# Fetches third-party sources: Tracktion Engine (pinned, shallow) and its nested JUCE submodule, and the C- plugins.
 # Safe to re-run.
 
 $ErrorActionPreference = 'Stop'
@@ -47,6 +47,9 @@ Invoke-Git -C $tePath config submodule.modules/juce.url https://github.com/juce-
 Invoke-Git -C $tePath submodule update --depth 1
 
 Invoke-Git add .gitmodules $tePath
+
+# The plugins' own JUCE submodule stays out (not recursive): CDAW builds them with Tracktion's JUCE.
+Invoke-Git submodule update --init --depth 1 third_party/cdaw-plugins
 
 Write-Host "Tracktion Engine: $(git -C $tePath rev-parse --short HEAD)"
 Write-Host "JUCE:             $(git -C "$tePath/modules/juce" rev-parse --short HEAD)"

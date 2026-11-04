@@ -1,5 +1,5 @@
 #include "ExportDialog.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../../Model/EditViewState.h"
 #include "../../Model/ProjectSession.h"
 #include "../../Model/TempoOps.h"

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "SharedEffectPlugin.h"
-#include "../Shared/DSP/ChorusEngine.h"
-#include "../Shared/Chorus/ChorusParameters.h"
+#include "Shared/DSP/ChorusEngine.h"
+#include "Shared/Chorus/ChorusParameters.h"
 
 namespace cdaw
 {

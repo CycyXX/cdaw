@@ -1,8 +1,8 @@
 #pragma once
 
 #include "SharedEffectPlugin.h"
-#include "../Shared/DSP/LeadEngine.h"
-#include "../Shared/Lead/LeadParameters.h"
+#include "Shared/DSP/LeadEngine.h"
+#include "Shared/Lead/LeadParameters.h"
 
 namespace cdaw
 {

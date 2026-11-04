@@ -1,5 +1,5 @@
 #include "SynthPlugin.h"
-#include "../Shared/Synth/SynthView.h"
+#include "Shared/Synth/SynthView.h"
 #include "../UI/Plugins/SharedEffectEditor.h"
 
 namespace cdaw

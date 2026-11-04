@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../../PCH.h"
-#include "../../Shared/UI/KnobParameter.h"
+#include "Shared/UI/KnobParameter.h"
 
 namespace cdaw
 {

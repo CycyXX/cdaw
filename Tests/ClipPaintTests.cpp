@@ -6,7 +6,7 @@
 #include "Model/ProjectSession.h"
 #include "Model/TrackOps.h"
 #include "UI/Arrange/ArrangeView.h"
-#include "UI/LookAndFeel/CDAWLookAndFeel.h"
+#include "Shared/LookAndFeel/CDAWLookAndFeel.h"
 
 namespace cdaw::test
 {

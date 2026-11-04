@@ -1,5 +1,5 @@
 #include "ChorusPlugin.h"
-#include "../Shared/Chorus/ChorusView.h"
+#include "Shared/Chorus/ChorusView.h"
 #include "../UI/Plugins/SharedEffectEditor.h"
 
 namespace cdaw

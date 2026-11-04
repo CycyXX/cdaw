@@ -1,5 +1,5 @@
 #include "TakeLanes.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../../Model/GroupEdit.h"
 
 namespace cdaw

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "SharedEffectPlugin.h"
-#include "../Shared/DSP/SynthEngine.h"
-#include "../Shared/Synth/SynthParameters.h"
+#include "Shared/DSP/SynthEngine.h"
+#include "Shared/Synth/SynthParameters.h"
 
 namespace cdaw
 {

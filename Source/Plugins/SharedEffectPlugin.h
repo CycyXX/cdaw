@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../PCH.h"
-#include "../Shared/Common/ParameterSpec.h"
-#include "../Shared/DSP/TempoSync.h"
+#include "Shared/Common/ParameterSpec.h"
+#include "Shared/DSP/TempoSync.h"
 
 namespace cdaw
 {

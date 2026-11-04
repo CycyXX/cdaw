@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../PCH.h"
-#include "../Shared/DSP/AnalyserFifo.h"
+#include "Shared/DSP/AnalyserFifo.h"
 
 namespace cdaw
 {

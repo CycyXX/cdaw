@@ -1,8 +1,8 @@
 #pragma once
 
 #include "SharedEffectPlugin.h"
-#include "../Shared/DSP/DistEngine.h"
-#include "../Shared/Dist/DistParameters.h"
+#include "Shared/DSP/DistEngine.h"
+#include "Shared/Dist/DistParameters.h"
 
 namespace cdaw
 {

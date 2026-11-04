@@ -1,5 +1,5 @@
 #include "PluginMenus.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../../App/AppSettings.h"
 #include "../../Model/TrackOps.h"
 #include "../../Plugins/BuiltInPlugins.h"

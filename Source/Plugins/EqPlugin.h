@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../PCH.h"
-#include "../Shared/DSP/EqMath.h"
+#include "Shared/DSP/EqMath.h"
 
 namespace cdaw
 {

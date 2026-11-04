@@ -3,7 +3,7 @@
 // differs by more than -120 dB. A golden set only means something from one build configuration.
 
 #include "TestEngine.h"
-#include "DspScenarios.h"
+#include "tests/DspScenarios.h"
 
 namespace cdaw::test
 {

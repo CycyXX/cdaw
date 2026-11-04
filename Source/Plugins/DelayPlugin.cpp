@@ -1,5 +1,5 @@
 #include "DelayPlugin.h"
-#include "../Shared/Delay/DelayView.h"
+#include "Shared/Delay/DelayView.h"
 #include "../UI/Plugins/SharedEffectEditor.h"
 
 namespace cdaw

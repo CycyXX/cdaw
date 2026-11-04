@@ -1,5 +1,5 @@
 #include "PhaserPlugin.h"
-#include "../Shared/Phaser/PhaserView.h"
+#include "Shared/Phaser/PhaserView.h"
 #include "../UI/Plugins/SharedEffectEditor.h"
 
 namespace cdaw

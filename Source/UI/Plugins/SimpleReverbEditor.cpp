@@ -1,8 +1,8 @@
 #include "SimpleReverbEditor.h"
 #include "TeKnobParameter.h"
 #include "../../Plugins/SimpleReverbPlugin.h"
-#include "../LookAndFeel/Palette.h"
-#include "../../Shared/UI/SpectrumAnalyser.h"
+#include "Shared/LookAndFeel/Palette.h"
+#include "Shared/UI/SpectrumAnalyser.h"
 
 namespace cdaw
 {

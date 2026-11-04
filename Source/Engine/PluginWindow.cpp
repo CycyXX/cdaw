@@ -1,6 +1,6 @@
 #include "PluginWindow.h"
 #include "../App/AppContext.h"
-#include "../UI/LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 
 namespace cdaw
 {

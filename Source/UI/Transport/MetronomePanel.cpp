@@ -1,5 +1,5 @@
 #include "MetronomePanel.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../../App/AppContext.h"
 
 namespace cdaw

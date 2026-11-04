@@ -23,7 +23,7 @@
 #include "../UI/Common/ProgressWindow.h"
 #include "../UI/Common/ProjectLoadWindow.h"
 #include "../UI/Common/StatusBar.h"
-#include "../UI/LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../UI/Transport/TransportBar.h"
 
 namespace cdaw

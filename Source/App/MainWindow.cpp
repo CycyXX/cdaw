@@ -1,7 +1,7 @@
 #include "MainWindow.h"
 #include "MainComponent.h"
 #include "AppContext.h"
-#include "../UI/LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 
 #if JUCE_WINDOWS
  #include <windows.h>

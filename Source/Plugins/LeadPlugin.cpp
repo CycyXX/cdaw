@@ -1,5 +1,5 @@
 #include "LeadPlugin.h"
-#include "../Shared/Lead/LeadView.h"
+#include "Shared/Lead/LeadView.h"
 #include "../UI/Plugins/SharedEffectEditor.h"
 
 namespace cdaw

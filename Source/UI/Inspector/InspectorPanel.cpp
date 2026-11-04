@@ -1,7 +1,7 @@
 #include "InspectorPanel.h"
 #include "../Arrange/TrackHeader.h"
 #include "../Common/LevelMeter.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../Mixer/InsertSlots.h"
 #include "../../App/AppSettings.h"
 #include "../../Model/DrumMapLibrary.h"

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../PCH.h"
-#include "../Shared/DSP/CompressorEngine.h"
+#include "Shared/DSP/CompressorEngine.h"
 
 namespace cdaw
 {

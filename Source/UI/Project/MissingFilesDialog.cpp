@@ -1,5 +1,5 @@
 #include "MissingFilesDialog.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../../Model/ProjectSession.h"
 
 namespace cdaw

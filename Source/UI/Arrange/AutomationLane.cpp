@@ -1,6 +1,6 @@
 #include "AutomationLane.h"
 #include "TimeRuler.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../../Model/AutomationOps.h"
 
 namespace cdaw

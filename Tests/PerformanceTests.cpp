@@ -4,7 +4,7 @@
 // and not the graphics card's.
 
 #include "TestEngine.h"
-#include "DspScenarios.h"
+#include "tests/DspScenarios.h"
 #include "Model/AutomationOps.h"
 #include "Model/ClipOps.h"
 #include "Model/CompOps.h"
@@ -17,7 +17,7 @@
 #include "Plugins/MultibandPlugin.h"
 #include "Plugins/ReverbPlugin.h"
 #include "UI/Arrange/ArrangeView.h"
-#include "UI/LookAndFeel/CDAWLookAndFeel.h"
+#include "Shared/LookAndFeel/CDAWLookAndFeel.h"
 #include "UI/Mixer/MixerView.h"
 #include "UI/PianoRoll/PianoRoll.h"
 #include <tracktion_graph/tracktion_graph.h>

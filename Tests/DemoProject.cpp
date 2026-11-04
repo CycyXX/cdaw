@@ -42,7 +42,7 @@
 #include "Render/ExportService.h"
 #include "UI/Arrange/ArrangeView.h"
 #include "UI/Export/ExportDialog.h"
-#include "UI/LookAndFeel/CDAWLookAndFeel.h"
+#include "Shared/LookAndFeel/CDAWLookAndFeel.h"
 #include "UI/Mixer/MixerView.h"
 #include "UI/Notes/NotesPage.h"
 #include "UI/PianoRoll/PianoRoll.h"

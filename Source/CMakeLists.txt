@@ -4,6 +4,13 @@ file(GLOB_RECURSE CDAW_LIB_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
 list(REMOVE_ITEM CDAW_LIB_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/App/Main.cpp")
+# C-Dist's files that main never committed stay on disk until this branch is merged.
+list(FILTER CDAW_LIB_SOURCES EXCLUDE REGEX "/Source/Shared/")
+
+# The plugins' shared code (engines, parameters, views), compiled in for the built-in effects.
+file(GLOB_RECURSE CDAW_PLUGIN_SOURCES CONFIGURE_DEPENDS
+    "${CDAW_PLUGINS_DIR}/Shared/*.cpp"
+    "${CDAW_PLUGINS_DIR}/Shared/*.h")
 
 # Images compiled into the exe (splash screen logo).
 juce_add_binary_data(cdaw_binary
@@ -11,12 +18,13 @@ juce_add_binary_data(cdaw_binary
     HEADER_NAME CDAWBinary.h
     SOURCES "${CMAKE_SOURCE_DIR}/resources/logo/splash_logo.png")
 
-add_library(cdaw_lib STATIC ${CDAW_LIB_SOURCES})
+add_library(cdaw_lib STATIC ${CDAW_LIB_SOURCES} ${CDAW_PLUGIN_SOURCES})
 target_link_libraries(cdaw_lib PUBLIC cdaw_modules cdaw_binary)
-target_include_directories(cdaw_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(cdaw_lib PUBLIC "${CDAW_PLUGINS_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
 target_precompile_headers(cdaw_lib PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/PCH.h")
 cdaw_apply_compile_options(cdaw_lib)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${CDAW_LIB_SOURCES})
+source_group(TREE "${CDAW_PLUGINS_DIR}" PREFIX "Plugins" FILES ${CDAW_PLUGIN_SOURCES})
 
 # The application
 juce_add_gui_app(CDAW

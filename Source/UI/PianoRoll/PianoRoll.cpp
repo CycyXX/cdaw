@@ -1,5 +1,5 @@
 #include "PianoRoll.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 
 namespace cdaw
 {

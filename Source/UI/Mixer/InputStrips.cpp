@@ -1,5 +1,5 @@
 #include "InputStrips.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../../Model/TrackOps.h"
 
 namespace cdaw

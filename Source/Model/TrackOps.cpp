@@ -1,7 +1,7 @@
 #include "TrackOps.h"
 #include "EditViewState.h"
 #include "DrumMapLibrary.h"
-#include "../UI/LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 
 namespace cdaw::TrackOps
 {

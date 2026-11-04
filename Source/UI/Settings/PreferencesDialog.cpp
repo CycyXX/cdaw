@@ -1,5 +1,5 @@
 #include "PreferencesDialog.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../Plugins/PluginMenus.h"
 #include "../../App/AppContext.h"
 #include "../../App/AppSettings.h"

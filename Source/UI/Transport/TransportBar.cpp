@@ -1,5 +1,5 @@
 #include "TransportBar.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../../Commands/CommandIDs.h"
 #include "../../Model/KeyScale.h"
 #include "MetronomePanel.h"

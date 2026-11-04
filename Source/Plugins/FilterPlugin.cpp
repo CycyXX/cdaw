@@ -1,5 +1,5 @@
 #include "FilterPlugin.h"
-#include "../Shared/Filter/FilterView.h"
+#include "Shared/Filter/FilterView.h"
 #include "../UI/Plugins/SharedEffectEditor.h"
 
 namespace cdaw

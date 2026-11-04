@@ -5,7 +5,7 @@
 #include "../Arrange/TrackHeader.h"
 #include "../../Engine/MasterAnalyser.h"
 #include "../Common/LevelMeter.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../../Model/MixerOps.h"
 #include "../../Model/TrackOps.h"
 

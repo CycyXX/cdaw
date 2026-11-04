@@ -1,5 +1,5 @@
 #include "InsertSlots.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../Plugins/PluginMenus.h"
 #include "../../Model/MixerOps.h"
 #include "../../Model/TrackOps.h"

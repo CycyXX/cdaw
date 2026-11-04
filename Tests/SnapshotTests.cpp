@@ -17,7 +17,7 @@
 #include "Model/TrackOps.h"
 #include "UI/Arrange/ArrangeView.h"
 #include "UI/Notes/NotesPage.h"
-#include "UI/LookAndFeel/CDAWLookAndFeel.h"
+#include "Shared/LookAndFeel/CDAWLookAndFeel.h"
 #include "UI/Mixer/MixerView.h"
 #include "UI/Mixer/SpectrumView.h"
 #include "UI/PianoRoll/PianoRoll.h"

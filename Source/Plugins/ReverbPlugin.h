@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../PCH.h"
-#include "../Shared/DSP/ReverbEngine.h"
-#include "../Shared/CVerb/CVerbParameters.h"
+#include "Shared/DSP/ReverbEngine.h"
+#include "Shared/CVerb/CVerbParameters.h"
 
 namespace cdaw
 {

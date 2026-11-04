@@ -36,7 +36,7 @@ foreach ($plugin in $plugins) {
     & "$PSScriptRoot\build.ps1" -Target $plugin.Target *> $null
     if ($LASTEXITCODE -ne 0) { Write-Host "$($plugin.Bundle) build FAILED - not installing it"; exit 1 }
 
-    $vst3 = "$root\build\ninja-msvc-relwithdebinfo\VST3\$($plugin.Folder)\$($plugin.Artefacts)\RelWithDebInfo\VST3\$($plugin.Bundle)"
+    $vst3 = "$root\build\ninja-msvc-relwithdebinfo\cdaw-plugins\VST3\$($plugin.Folder)\$($plugin.Artefacts)\RelWithDebInfo\VST3\$($plugin.Bundle)"
     if (-not (Test-Path $vst3)) { continue }
 
     New-Item -ItemType Directory -Force $distVst3 | Out-Null

@@ -10,7 +10,7 @@
 #include "Shared/CVerb/CVerbView.h"
 #include "Shared/Compressor/CompressorView.h"
 #include "Shared/Multiband/MultibandView.h"
-#include "UI/LookAndFeel/CDAWLookAndFeel.h"
+#include "Shared/LookAndFeel/CDAWLookAndFeel.h"
 #include "UI/Plugins/CompressorEditor.h"
 #include "UI/Plugins/EqEditor.h"
 #include "UI/Plugins/MultibandEditor.h"
@@ -119,29 +119,19 @@ namespace cdaw::test
         /** The C-Verb VST3 from this build tree, if it has been built. */
         static juce::File findCVerbVst3()
         {
-            // .../build/<preset>/Tests/CDAW_Tests_artefacts/<config>/CDAW_Tests.exe
-            auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-            auto config = exe.getParentDirectory();
-            auto preset = config.getParentDirectory().getParentDirectory().getParentDirectory();
-            return preset.getChildFile ("VST3/CVerb/CVerb_artefacts").getChildFile (config.getFileName()).getChildFile ("VST3/C-Verb.vst3");
+            return findPluginVst3 ("CVerb", "C-Verb");
         }
 
         /** The C-Comp VST3 from this build tree, if it has been built. */
         static juce::File findCCompVst3()
         {
-            auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-            auto config = exe.getParentDirectory();
-            auto preset = config.getParentDirectory().getParentDirectory().getParentDirectory();
-            return preset.getChildFile ("VST3/CComp/CComp_artefacts").getChildFile (config.getFileName()).getChildFile ("VST3/C-Comp.vst3");
+            return findPluginVst3 ("CComp", "C-Comp");
         }
 
         /** The C-Multicomp VST3 from this build tree, if it has been built. */
         static juce::File findCMulticompVst3()
         {
-            auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-            auto config = exe.getParentDirectory();
-            auto preset = config.getParentDirectory().getParentDirectory().getParentDirectory();
-            return preset.getChildFile ("VST3/CMulticomp/CMulticomp_artefacts").getChildFile (config.getFileName()).getChildFile ("VST3/C-Multicomp.vst3");
+            return findPluginVst3 ("CMulticomp", "C-Multicomp");
         }
 
         static void saveSnapshot (juce::Component& c, const juce::String& name)

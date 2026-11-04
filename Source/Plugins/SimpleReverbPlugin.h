@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../PCH.h"
-#include "../Shared/DSP/ReverbEngine.h"
+#include "Shared/DSP/ReverbEngine.h"
 
 namespace cdaw
 {

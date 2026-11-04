@@ -1,6 +1,6 @@
 #include "CompressorPlugin.h"
 #include "../UI/Plugins/CompressorEditor.h"
-#include "../Shared/DSP/CompressorMath.h"
+#include "Shared/DSP/CompressorMath.h"
 
 namespace cdaw
 {

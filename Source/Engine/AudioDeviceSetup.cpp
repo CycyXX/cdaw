@@ -1,6 +1,6 @@
 #include "AudioDeviceSetup.h"
 #include "../App/AppSettings.h"
-#include "../UI/LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 
 namespace cdaw::AudioDeviceSetup
 {

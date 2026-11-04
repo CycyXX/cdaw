@@ -1,5 +1,5 @@
 #include "ClipComponent.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../../Model/ClipOps.h"
 #include "../../Model/CompOps.h"
 #include "../../Model/GroupEdit.h"

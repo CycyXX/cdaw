@@ -1,8 +1,8 @@
 #pragma once
 
 #include "SharedEffectPlugin.h"
-#include "../Shared/DSP/EsserEngine.h"
-#include "../Shared/Esser/EsserParameters.h"
+#include "Shared/DSP/EsserEngine.h"
+#include "Shared/Esser/EsserParameters.h"
 
 namespace cdaw
 {

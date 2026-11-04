@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../PCH.h"
-#include "../Shared/DSP/MultibandEngine.h"
-#include "../Shared/Multiband/MultibandParameters.h"
+#include "Shared/DSP/MultibandEngine.h"
+#include "Shared/Multiband/MultibandParameters.h"
 
 namespace cdaw
 {

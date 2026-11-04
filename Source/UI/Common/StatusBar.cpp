@@ -1,5 +1,5 @@
 #include "StatusBar.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../../Engine/AudioDeviceSetup.h"
 
 namespace cdaw

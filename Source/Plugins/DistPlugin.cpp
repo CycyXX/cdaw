@@ -1,5 +1,5 @@
 #include "DistPlugin.h"
-#include "../Shared/Dist/DistView.h"
+#include "Shared/Dist/DistView.h"
 #include "../UI/Plugins/SharedEffectEditor.h"
 
 namespace cdaw

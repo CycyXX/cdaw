@@ -1,8 +1,8 @@
 #pragma once
 
 #include "SharedEffectPlugin.h"
-#include "../Shared/DSP/FilterEngine.h"
-#include "../Shared/Filter/FilterParameters.h"
+#include "Shared/DSP/FilterEngine.h"
+#include "Shared/Filter/FilterParameters.h"
 
 namespace cdaw
 {

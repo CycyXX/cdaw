@@ -1,8 +1,8 @@
 #pragma once
 
 #include "SharedEffectPlugin.h"
-#include "../Shared/DSP/PhaserEngine.h"
-#include "../Shared/Phaser/PhaserParameters.h"
+#include "Shared/DSP/PhaserEngine.h"
+#include "Shared/Phaser/PhaserParameters.h"
 
 namespace cdaw
 {

@@ -38,22 +38,15 @@ add_subdirectory("${TE_DIR}" tracktion_engine EXCLUDE_FROM_ALL)
 
 include(cmake/CDAWModules.cmake)
 
-add_subdirectory(Source)
+# The C- plugins live in their own repository, as a submodule. CDAW compiles their shared code into its
+# built-in effects (Source/CMakeLists.txt), and builds their VST3s using the JUCE Tracktion brings.
+set(CDAW_PLUGINS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/cdaw-plugins")
+if(NOT EXISTS "${CDAW_PLUGINS_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "The plugins are missing. Run scripts\\bootstrap.ps1 first.")
+endif()
 
-# C-Verb, C-Multicomp, C-Comp, C-Delay, C-Chorus, C-Phaser, C-Filter, C-Dist, C-Esser, C-Synth and C-Lead as VST3s, built from the same
-# shared sources as the app's plugins.
-add_subdirectory(VST3/CVerb)
-add_subdirectory(VST3/CMulticomp)
-add_subdirectory(VST3/CComp)
-include(VST3/Common/CDAWEffect.cmake)
-add_subdirectory(VST3/CDelay)
-add_subdirectory(VST3/CChorus)
-add_subdirectory(VST3/CPhaser)
-add_subdirectory(VST3/CFilter)
-add_subdirectory(VST3/CDist)
-add_subdirectory(VST3/CEsser)
-add_subdirectory(VST3/CSynth)
-add_subdirectory(VST3/CLead)
+add_subdirectory(Source)
+add_subdirectory("${CDAW_PLUGINS_DIR}" cdaw-plugins)
 
 option(CDAW_BUILD_TESTS "Build the CDAW_Tests target" ON)
 if(CDAW_BUILD_TESTS)

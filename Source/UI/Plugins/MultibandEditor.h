@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../../PCH.h"
-#include "../../Shared/Multiband/MultibandView.h"
+#include "Shared/Multiband/MultibandView.h"
 
 namespace cdaw
 {

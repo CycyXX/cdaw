@@ -1,5 +1,5 @@
 #include "TrackHeader.h"
-#include "../LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "../../Model/CompOps.h"
 #include "../../Model/GroupEdit.h"
 #include "../../Model/TrackOps.h"

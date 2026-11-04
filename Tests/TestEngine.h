@@ -7,6 +7,17 @@
 
 namespace cdaw::test
 {
+    /** A plugin's VST3 from this build tree (built or not).
+        The tests run from build/<preset>/Tests/CDAW_Tests_artefacts/<config>/CDAW_Tests.exe. */
+    inline juce::File findPluginVst3 (const juce::String& folder, const juce::String& bundle)
+    {
+        auto config = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
+        auto preset = config.getParentDirectory().getParentDirectory().getParentDirectory();
+        return preset.getChildFile ("cdaw-plugins/VST3/" + folder + "/" + folder + "_artefacts")
+                     .getChildFile (config.getFileName())
+                     .getChildFile ("VST3/" + bundle + ".vst3");
+    }
+
     /** Engine for tests: separate settings folder ("CDAW_Tests"), no audio device. */
     struct TestEngineBehaviour : public te::EngineBehaviour
     {

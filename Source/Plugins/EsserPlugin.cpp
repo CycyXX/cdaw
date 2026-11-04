@@ -1,5 +1,5 @@
 #include "EsserPlugin.h"
-#include "../Shared/Esser/EsserView.h"
+#include "Shared/Esser/EsserView.h"
 #include "../UI/Plugins/SharedEffectEditor.h"
 
 namespace cdaw

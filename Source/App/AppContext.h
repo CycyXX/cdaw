@@ -5,7 +5,7 @@
 #include "../Engine/CDAWEngine.h"
 #include "../Engine/AudioDeviceSetup.h"
 #include "../Engine/AudioDeviceMonitor.h"
-#include "../UI/LookAndFeel/CDAWLookAndFeel.h"
+#include "Shared/LookAndFeel/CDAWLookAndFeel.h"
 
 namespace cdaw
 {

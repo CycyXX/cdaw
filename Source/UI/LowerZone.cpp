@@ -1,5 +1,5 @@
 #include "LowerZone.h"
-#include "LookAndFeel/Palette.h"
+#include "Shared/LookAndFeel/Palette.h"
 #include "Mixer/MixerView.h"
 #include "PianoRoll/PianoRoll.h"
 #include "Notes/NotesPage.h"
