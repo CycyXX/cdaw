@@ -12,7 +12,10 @@
 #include "Model/ProjectSession.h"
 #include "Model/TrackOps.h"
 #include "Plugins/CompressorPlugin.h"
+#include "Plugins/DistPlugin.h"
 #include "Plugins/EqPlugin.h"
+#include "Plugins/MultibandPlugin.h"
+#include "Plugins/ReverbPlugin.h"
 #include "UI/Arrange/ArrangeView.h"
 #include "UI/LookAndFeel/CDAWLookAndFeel.h"
 #include "UI/Mixer/MixerView.h"
@@ -99,6 +102,19 @@ namespace cdaw::test
                         buffer.clear();
 
                     auto process = scenario.create (scenario.rate);
+
+                    // Silence as it is when nothing has played for a while: some engines rest by then.
+                    if (silent)
+                    {
+                        for (int run = 0; run < 3; ++run)
+                            for (int pos = 0; pos + blockSize <= buffer.getNumSamples(); pos += blockSize)
+                            {
+                                juce::MidiBuffer none;
+                                const auto time = pos / scenario.rate;
+                                process ({ buffer, pos, blockSize, none, { false, time, time * dsp::bpm / 60.0 }, false });
+                            }
+                    }
+
                     auto start = now();
 
                     for (int pos = 0; pos + blockSize <= buffer.getNumSamples(); pos += blockSize)
@@ -211,6 +227,39 @@ namespace cdaw::test
             timed ("Open a project", 3, [&] (int) { ProjectSession reopened (engine, editFile); });
 
             juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
+
+            writeHeavyProject();
+        }
+
+        /** A project that works the CPU hard, for playing in the app itself (silently). */
+        void writeHeavyProject()
+        {
+            auto dir = getTestDir().getChildFile ("PerfHeavy");
+            dir.deleteRecursively();
+            dir.createDirectory();
+
+            ProjectSession session (getEngine(), ProjectSession::createProjectFolder (dir, "Heavy"));
+            auto& edit = session.getEdit();
+            edit.getMasterVolumePlugin()->setVolumeDb (-100.0f);
+            auto wave = writeSineFile ("perf_heavy_wave", 60.0, 0.4f, 110.0);
+            const int numTracks = juce::jmax (1, juce::SystemStats::getEnvironmentVariable ("CDAW_PERF_HEAVY_TRACKS", "30").getIntValue());
+
+            for (int t = 0; t < numTracks; ++t)
+            {
+                auto track = t == 0 ? te::getAudioTracks (edit)[0]
+                                    : TrackOps::addAudioTrack (edit, nullptr, nullptr, "Heavy " + juce::String (t + 1)).get();
+
+                for (int c = 0; c < 5; ++c)
+                    track->insertWaveClip ("Clip", wave, { { at (c * 60.0), te::TimeDuration::fromSeconds (60.0) }, {} }, false);
+
+                int slot = 0;
+
+                for (auto* type : { DistPlugin::xmlTypeName, MultibandPlugin::xmlTypeName, ReverbPlugin::xmlTypeName })
+                    track->pluginList.insertPlugin (edit.getPluginCache().createNewPlugin (type, {}), slot++, nullptr);
+            }
+
+            expect (session.save());
+            logMessage ("PERF heavy project: " + session.getEditFile().getFullPathName());
         }
 
         void measureModel (ProjectSession& session)

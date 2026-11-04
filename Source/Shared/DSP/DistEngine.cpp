@@ -254,6 +254,7 @@ namespace cdaw
         historyCountdown = 0;
         historyPeak = 0.0f;
         primed = false;
+        silence.reset();
         for (int s = 0; s < maxStages; ++s)
             heatIn[s] = heatOut[s] = 0.0f;
     }
@@ -666,6 +667,28 @@ namespace cdaw
             primed = true;
         }
 
+        // Silence stays silence: nothing to work out (it costs as much as playing) once the filters
+        // and the envelope that sets the bias have died away. The buffer already holds the output.
+        // The smoothed values go on as they would have, so sound returns as if nothing had stopped.
+        // The gate keeps running for its display.
+        const bool resting = silence.isPast (buffer, start, n, numChannels, rate, 4.0);
+
+        if (resting)
+        {
+            const int numStages = profile (s.voicing).stages;
+
+            for (int ch = 0; ch < numChannels; ++ch)
+                for (int st = 0; st < numStages; ++st)
+                    channels[ch].gain[st].advance (g, n * oversampling);
+
+            level.advance (levelTarget, n);
+            blend.advance (blendTarget, n);
+            makeUp.advance (compensationTarget, n);
+
+            for (int st = 0; st < maxStages; ++st)
+                heatIn[st] = heatOut[st] = 0.0f;
+        }
+
         for (int piece = 0; piece < n; piece += blockSize)
         {
             const int length = juce::jmin (blockSize, n - piece);
@@ -681,15 +704,23 @@ namespace cdaw
             }
 
             runGate (s, buffer, at, length, inputGain);
-            for (int i = 0; i < length; ++i)
-            {
-                makeUps[(size_t) i] = makeUp.next (compensationTarget);
-                levels[(size_t) i] = level.next (levelTarget);
-                blends[(size_t) i] = blend.next (blendTarget);
-            }
 
-            for (int ch = 0; ch < numChannels; ++ch)
-                runChannel (ch, s, buffer.getWritePointer (ch, at), length, inputGain);
+            if (resting)
+            {
+                envelopes[(size_t) (length - 1)] = 0.0f;
+            }
+            else
+            {
+                for (int i = 0; i < length; ++i)
+                {
+                    makeUps[(size_t) i] = makeUp.next (compensationTarget);
+                    levels[(size_t) i] = level.next (levelTarget);
+                    blends[(size_t) i] = blend.next (blendTarget);
+                }
+
+                for (int ch = 0; ch < numChannels; ++ch)
+                    runChannel (ch, s, buffer.getWritePointer (ch, at), length, inputGain);
+            }
 
             juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), numChannels, at, length);
             outputFifo->push (view);

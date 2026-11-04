@@ -72,6 +72,19 @@ namespace cdaw
             return value;
         }
 
+        /** What `numSamples` calls of next would do. Rounding soon stops the value moving (often a
+            little off the target), and from then on there's nothing left to do. */
+        void advance (float target, int numSamples) noexcept
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const auto before = value;
+
+                if (juce::exactlyEqual (next (target), before))
+                    return;
+            }
+        }
+
         float value = 0.0f, coefficient = 0.0f;
     };
 }

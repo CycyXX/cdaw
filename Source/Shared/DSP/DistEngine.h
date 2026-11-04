@@ -5,6 +5,7 @@
 #include "EqMath.h"
 #include "FractionalDelay.h"
 #include "PeakMeter.h"
+#include "SilenceTimer.h"
 #include <array>
 #include <atomic>
 
@@ -216,5 +217,6 @@ namespace cdaw
 
         Smoothed level, blend, makeUp;
         float heatIn[maxStages] {}, heatOut[maxStages] {};
+        SilenceTimer silence;
     };
 }

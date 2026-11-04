@@ -38,6 +38,7 @@ namespace cdaw
             z[0] = z[1] = 0.0;
 
         primed = false;
+        silence.reset();
     }
 
     //==============================================================================
@@ -137,6 +138,41 @@ namespace cdaw
             delayMs.value = s.delayMs;
             depthMs.value = s.depth * maxModulationMs;
             primed = true;
+        }
+
+        // Silence stays silence: once the feedback has died away nothing comes out, and the buffer
+        // already holds that. (Well below hearing: what's left in the lines stays there, and returns
+        // with the sound.) The sweeps and the smoothed values go on as they would have, step by step
+        // as rounding matters here, so sound returns as if nothing had stopped.
+        const double passes = std::abs (feedback) > 0.01f ? std::log (1.0e-10) / std::log ((double) std::abs (feedback)) : 1.0;
+        const double longestPass = (juce::jlimit (0.2f, 40.0f, s.delayMs) + juce::jlimit (0.0f, 1.0f, s.depth) * maxModulationMs) * 0.001;
+
+        if (silence.isPast (buffer, start, n, numChannels, rate, 0.2 + passes * longestPass))
+        {
+            for (int v = 0; v < maxVoices; ++v)
+            {
+                voiceGain[(size_t) v].advance (voiceTarget[v], n);
+                auto& phase = phases[(size_t) v];
+                const double step = baseStep * rateMultipliers[(size_t) v];
+
+                for (int i = 0; i < n; ++i)
+                {
+                    phase += step;
+                    if (phase >= 1.0)
+                        phase -= 1.0;
+                }
+
+                voicePhase[(size_t) v].store (phase, std::memory_order_relaxed);
+            }
+
+            dryGain.advance (dryTarget, n);
+            wetGain.advance (wetTarget, n);
+            delayMs.advance (juce::jlimit (0.2f, 40.0f, s.delayMs), n);
+            depthMs.advance (juce::jlimit (0.0f, 1.0f, s.depth) * maxModulationMs, n);
+
+            inputPeak.push (0.0f);
+            wetPeak.push (0.0f);
+            return;
         }
 
         float* left = buffer.getWritePointer (0, start);

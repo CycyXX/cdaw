@@ -5,6 +5,7 @@
 #include "CompressorMath.h"
 #include "EqMath.h"
 #include "PeakMeter.h"
+#include "SilenceTimer.h"
 #include <array>
 #include <memory>
 
@@ -82,6 +83,7 @@ namespace cdaw
         std::array<double, numBands> envelopeDb {};
         std::array<juce::AudioBuffer<float>, numBands> bandBuffers;
         float lastOutputGain = 1.0f;
+        SilenceTimer silence;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MultibandEngine)
     };

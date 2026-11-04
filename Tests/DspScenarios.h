@@ -475,10 +475,26 @@ namespace cdaw::test::dsp
                 midi.addEvent (e.message, sample - pos);
     }
 
-    /** Renders the scenario with irregular block sizes, as hosts do. */
-    inline juce::AudioBuffer<float> render (const Scenario& scenario, double seconds = 4.0)
+    /** Renders the scenario with irregular block sizes, as hosts do. With `gapSeconds`, the input
+        or the notes stop and come back that much later, for engines that rest on silence. */
+    inline juce::AudioBuffer<float> render (const Scenario& scenario, double seconds = 4.0, double gapSeconds = 0.0)
     {
         auto buffer = makeInput (scenario.rate, seconds);
+        const auto gapEnd = (int) ((1.0 + gapSeconds) * scenario.rate);
+
+        if (gapSeconds > 0.0)
+        {
+            // One second, the gap, then that second again.
+            const auto oneSecond = (int) scenario.rate;
+            const auto input = makeInput (scenario.rate, 1.0);
+            buffer.clear();
+
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                buffer.copyFrom (ch, 0, input, ch, 0, oneSecond);
+                buffer.copyFrom (ch, gapEnd, input, ch, 0, oneSecond);
+            }
+        }
 
         if (scenario.instrument)
             buffer.clear();
@@ -493,7 +509,12 @@ namespace cdaw::test::dsp
             juce::MidiBuffer midi;
 
             if (scenario.instrument)
+            {
                 fillMidi (midi, pos, n, scenario.rate);
+
+                if (gapSeconds > 0.0)
+                    fillMidi (midi, pos - gapEnd, n, scenario.rate);
+            }
 
             const auto now = pos / scenario.rate;
             process ({ buffer, pos, n, midi, { true, now, now * bpm / 60.0 }, now >= switchSeconds });

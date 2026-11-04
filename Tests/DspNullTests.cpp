@@ -26,16 +26,28 @@ namespace cdaw::test
             for (auto& scenario : dsp::allScenarios())
             {
                 beginTest (scenario.name);
-                auto output = dsp::render (scenario);
-                checkHealthy (scenario.name, output);
+                check (scenario.name, dsp::render (scenario), dir);
 
-                auto file = dir.getChildFile (scenario.name + ".f32");
+                // Engines that rest on silence must pick up exactly as if they hadn't. (The settings
+                // change during the gap, too.)
+                const bool rests = scenario.name.startsWith ("dist_") || scenario.name.startsWith ("multiband_")
+                                    || scenario.name.startsWith ("chorus_") || scenario.name == "synth_default"
+                                    || scenario.name == "lead_default" || scenario.name == "lead_dist";
 
-                if (file.existsAsFile())
-                    compare (scenario.name, output, file);
-                else
-                    write (output, file);
+                if (rests)
+                    check (scenario.name + "_gap", dsp::render (scenario, 14.0, 8.0), dir);
             }
+        }
+
+        void check (const juce::String& name, const juce::AudioBuffer<float>& output, const juce::File& dir)
+        {
+            checkHealthy (name, output);
+            auto file = dir.getChildFile (name + ".f32");
+
+            if (file.existsAsFile())
+                compare (name, output, file);
+            else
+                write (output, file);
         }
 
         void checkHealthy (const juce::String& name, const juce::AudioBuffer<float>& output)
@@ -77,7 +89,7 @@ namespace cdaw::test
 
             auto* reference = static_cast<const float*> (golden.getData());
             float worst = 0.0f;
-            int firstDifference = -1;
+            int firstDifference = -1, worstAt = -1;
 
             for (int ch = 0; ch < output.getNumChannels(); ++ch)
             {
@@ -88,19 +100,20 @@ namespace cdaw::test
                 {
                     const auto difference = std::abs (now[i] - then[i]);
 
+                    if (difference > 0.0f && firstDifference < 0)
+                        firstDifference = i;
+
                     if (difference > worst)
                     {
                         worst = difference;
-
-                        if (firstDifference < 0)
-                            firstDifference = i;
+                        worstAt = i;
                     }
                 }
             }
 
             if (worst > 0.0f)
                 logMessage (name + ": differs by " + juce::String (juce::Decibels::gainToDecibels (worst, -200.0f), 1)
-                            + " dB, first at sample " + juce::String (firstDifference));
+                            + " dB, first at sample " + juce::String (firstDifference) + ", most at " + juce::String (worstAt));
 
             expect (worst <= limit, name + " changed by " + juce::String (juce::Decibels::gainToDecibels (worst, -200.0f), 1) + " dB");
         }

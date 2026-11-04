@@ -55,6 +55,7 @@ namespace cdaw
                 stage->state = {};
 
         envelopeDb = {};
+        silence.reset();
     }
 
     void MultibandEngine::designCrossovers (const std::array<float, numBands - 1>& f)
@@ -114,6 +115,27 @@ namespace cdaw
             inPeak[ch] = view.getMagnitude (ch, 0, n);
 
         designCrossovers (orderCrossovers (settings.crossovers));
+
+        // Silence stays silence: once the crossovers have died away and every band has recovered,
+        // there's nothing to work out. The buffer already holds the output.
+        const bool silentLongEnough = silence.isPast (view, 0, n, numChannels, rate, 0.5);
+
+        if (silentLongEnough && std::all_of (envelopeDb.begin(), envelopeDb.end(), [] (double env) { return juce::exactlyEqual (env, 0.0); }))
+        {
+            for (auto& meters : bandMeters)
+            {
+                meters.inputPeak.push (0.0f);
+                meters.outputPeak.push (0.0f);
+                meters.reduction.push (0.0f);
+            }
+
+            for (auto& meter : inputPeak)   meter.push (0.0f);
+            for (auto& meter : outputPeak)  meter.push (0.0f);
+
+            lastOutputGain = juce::Decibels::decibelsToGain (settings.output);
+            postFifo->push (view);
+            return;
+        }
 
         // Split: band 0 = LP0, then AP1, AP2;  band 1 = LP1 (HP0), then AP2;  band 2 = LP2 (HP1 (HP0));  band 3 = HP2 (HP1 (HP0)).
         for (int ch = 0; ch < numChannels; ++ch)

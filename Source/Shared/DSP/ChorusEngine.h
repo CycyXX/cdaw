@@ -4,6 +4,7 @@
 #include "EqMath.h"
 #include "FractionalDelay.h"
 #include "PeakMeter.h"
+#include "SilenceTimer.h"
 #include "TempoSync.h"
 #include <array>
 #include <atomic>
@@ -88,5 +89,6 @@ namespace cdaw
         float designedTone = -1.0f;
         Smoothed wetGain, dryGain, delayMs, depthMs;
         bool primed = false;
+        SilenceTimer silence;
     };
 }
