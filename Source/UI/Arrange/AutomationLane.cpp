@@ -244,7 +244,7 @@ namespace cdaw
             for (int i = 0; i < curve.getNumPoints(); ++i)
             {
                 auto x = (float) viewState.timeToX (curve.getPointTime (i));
-                if (x < -6 || x > w + 6)
+                if (x < (float) dirty.getX() - 6.0f || x > (float) dirty.getRight() + 6.0f)
                     continue;
 
                 auto y = valueToY (curve.getPointValue (i));

@@ -332,6 +332,19 @@ namespace cdaw::test
                 paint ({ 300 + i * 20, 0, 5, arrange->getHeight() });
             });
 
+            // Further along, past the comped clips: only plain clips under the playhead.
+            vs.viewStart = 30.0;
+            settle();
+            paint (arrange->getLocalBounds());
+
+            timed ("Paint a 5 px playhead strip, plain clips", 41, [&] (int i)
+            {
+                paint ({ 300 + i * 20, 0, 5, arrange->getHeight() });
+            });
+
+            vs.viewStart = 0.0;
+            settle();
+
             timed ("Scroll one step, with painting", 21, [&] (int i)
             {
                 vs.viewStart = i * 0.5;
