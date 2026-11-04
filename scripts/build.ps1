@@ -12,6 +12,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
+# Below normal priority, inherited by CMake, Ninja and the compilers: builds use every idle core
+# but give way to whatever else you're working on.
+(Get-Process -Id $PID).PriorityClass = 'BelowNormal'
+
 function Enter-MsvcEnvironment {
     if ($env:VSCMD_ARG_TGT_ARCH -eq 'x64' -and (Get-Command cl -ErrorAction SilentlyContinue)) { return }
 
