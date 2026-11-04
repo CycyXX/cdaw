@@ -6,4 +6,5 @@ CMakeUserPresets.json
 /scratch/
 **/Cache/
 compile_commands.json
-dist/
+# Anchored: on Windows git ignores case, so a bare dist/ also ignores any Dist/ folder.
+/dist/

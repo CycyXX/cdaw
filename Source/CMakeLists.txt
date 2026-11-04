@@ -4,8 +4,6 @@ file(GLOB_RECURSE CDAW_LIB_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
 list(REMOVE_ITEM CDAW_LIB_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/App/Main.cpp")
-# C-Dist's files that main never committed stay on disk until this branch is merged.
-list(FILTER CDAW_LIB_SOURCES EXCLUDE REGEX "/Source/Shared/")
 
 # The plugins' shared code (engines, parameters, views), compiled in for the built-in effects.
 file(GLOB_RECURSE CDAW_PLUGIN_SOURCES CONFIGURE_DEPENDS
