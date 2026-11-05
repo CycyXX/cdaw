@@ -33,12 +33,24 @@
       "displayName": "MSVC Release",
       "inherits": "base",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "ci",
+      "displayName": "CI (needs sccache)",
+      "description": "GitHub's build: Release has the shipping build's optimisation without its debug info, which would overflow the cache.",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER_LAUNCHER": "sccache",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "sccache"
+      }
     }
   ],
   "buildPresets": [
     { "name": "ninja-msvc-debug", "configurePreset": "ninja-msvc-debug" },
     { "name": "ninja-msvc-relwithdebinfo", "configurePreset": "ninja-msvc-relwithdebinfo" },
-    { "name": "ninja-msvc-release", "configurePreset": "ninja-msvc-release" }
+    { "name": "ninja-msvc-release", "configurePreset": "ninja-msvc-release" },
+    { "name": "ci", "configurePreset": "ci", "jobs": 4 }
   ],
   "testPresets": [
     { "name": "ninja-msvc-debug", "configurePreset": "ninja-msvc-debug", "output": { "outputOnFailure": true } },

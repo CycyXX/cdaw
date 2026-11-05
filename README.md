@@ -411,6 +411,11 @@ script, read `third_party\tracktion_engine\BREAKING-CHANGES.md`, rebuild and run
 - **Crackles at small buffer sizes**: use the RelWithDebInfo or Release build, the High
   Performance power plan, and turn off USB selective suspend.
 
+## Contributing
+
+Contributions are welcome: see [CONTRIBUTING](CONTRIBUTING.md). Changes to the C- plugins themselves go to
+[cdaw-plugins](https://github.com/CycyXX/cdaw-plugins).
+
 ## Licence
 
 Copyright (C) 2026 Cyrill Durrer
