@@ -226,8 +226,7 @@ You don't need the Visual Studio IDE: the Build Tools package is only the compil
 
 ### Build and run
 
-Double-click `Build-CDAW.bat`: it builds CDAW and the eleven VST3s (C-Verb, C-Multicomp, C-Comp, C-Esser, C-Delay,
-C-Chorus, C-Phaser, C-Filter, C-Dist, C-Synth, C-Lead) and puts them in `dist\`.
+Double-click `Build-CDAW.bat`: it builds CDAW and puts it in `dist\`.
 Start `dist\CDAW\CDAW.exe`.
 
 Or from PowerShell:
@@ -331,22 +330,25 @@ folder.
 
 C-Verb, C-Multicomp, C-Comp, C-Esser, C-Delay, C-Chorus, C-Phaser, C-Filter, C-Dist, C-Synth and C-Lead also build as VST3s
 (`C-Verb.vst3`, `C-Multicomp.vst3`, `C-Comp.vst3`, `C-Esser.vst3`, `C-Delay.vst3`, `C-Chorus.vst3`, `C-Phaser.vst3`,
-`C-Filter.vst3`, `C-Dist.vst3`, `C-Synth.vst3`, `C-Lead.vst3`) for Cubase and other hosts. `Build-CDAW.bat` builds them, and `scripts\publish.ps1`
-puts them in `dist\VST3` and installs them in
+`C-Filter.vst3`, `C-Dist.vst3`, `C-Synth.vst3`, `C-Lead.vst3`) for Cubase and other hosts. To install them, run
+`.\scripts\install.ps1` in [cdaw-plugins](https://github.com/CycyXX/cdaw-plugins). It puts them in
 `C:\Program Files\Common Files\VST3\CDAW`, the folder hosts scan for VST3 plugins (Windows asks for
 administrator approval once; if you decline, it goes to `%LOCALAPPDATA%\Programs\Common\VST3\CDAW`
 instead). In Cubase, open Studio > VST Plug-in Manager and rescan (or restart Cubase); C-Verb appears
 under Reverb, C-Multicomp, C-Comp and C-Esser under Dynamics, C-Delay under Delay, C-Chorus and C-Phaser under
-Modulation, C-Filter under Filter, C-Dist under Distortion, and C-Synth and C-Lead among the instruments (Synth). Close Cubase before publishing, as it keeps loaded plugins
+Modulation, C-Filter under Filter, C-Dist under Distortion, and C-Synth and C-Lead among the instruments (Synth). Close Cubase before installing, as it keeps loaded plugins
 locked. C-Comp's sidechain is the host's sidechain input: route a source to it in the host, then
 switch Sidechain on in the plugin (the sidechain button). Synced delay times and LFOs follow the
 host's tempo and position.
 
 The plugins live in [cdaw-plugins](https://github.com/CycyXX/cdaw-plugins), which CDAW has as a
 submodule in `third_party\cdaw-plugins`. To change one, commit and push there first, then commit the
-new submodule version here. Each plugin's CDAW build and VST3 compile the same code in that
-repository's `Shared` folder, so a change there applies to both. The DSP, parameters, editor and
-VST3 glue below are in the submodule, and the CDAW glue is here:
+new submodule version here. `scripts\update-plugins.ps1` moves the submodule to the latest `main`, then rebuilds
+and publishes CDAW, leaving the move staged for you to commit. `scripts\publish.ps1` warns if the submodule isn't the
+latest `main`, and refuses if it has uncommitted changes. CDAW still builds the VST3s because its tests compare
+against them, but it doesn't install them. Each plugin's CDAW build and VST3 compile the same code in that
+repository's `Shared` folder, so a change there applies to both once CDAW's submodule has moved. The DSP, parameters,
+editor and VST3 glue below are in the submodule, and the CDAW glue is here:
 
 | | DSP | Parameters | Editor | CDAW glue | VST3 glue |
 |---|---|---|---|---|---|

@@ -1,15 +1,23 @@
-﻿# Whether every file of the bundle at $from is also at $to, with the same contents.
-function Test-SameBundle ([string] $from, [string] $to) {
-    $from = (Resolve-Path $from).Path
-    foreach ($file in Get-ChildItem $from -Recurse -File) {
-        $other = Join-Path $to $file.FullName.Substring($from.Length)
-        if (-not (Test-Path $other)) { return $false }
-        if ((Get-FileHash $file.FullName).Hash -ne (Get-FileHash $other).Hash) { return $false }
-    }
-    return $true
+# Copies the CDAW build to dist\CDAW. The VST3s for Cubase and other hosts are installed from cdaw-plugins,
+# by its scripts\install.ps1.
+$root = Split-Path -Parent $PSScriptRoot
+$plugins = "$root\third_party\cdaw-plugins"
+
+# CDAW's built-in plugins are compiled from the submodule, so say so if that isn't the latest version.
+# Uncommitted changes there are refused: nothing could rebuild what was published.
+if (git -C $plugins status --porcelain --ignore-submodules) {
+    Write-Host "NOT published: third_party\cdaw-plugins has uncommitted changes. Commit them in cdaw-plugins, then run scripts\update-plugins.ps1."
+    exit 1
 }
 
-$root = Split-Path -Parent $PSScriptRoot
+$current = git -C $plugins rev-parse HEAD
+$latest = (git -C $plugins ls-remote origin refs/heads/main 2>$null) -split '\s+' | Select-Object -First 1
+if (-not $latest) {
+    Write-Host "WARNING: couldn't reach GitHub to check for a newer version of the plugins."
+} elseif ($current -ne $latest) {
+    Write-Host "WARNING: CDAW's plugins aren't the latest (built from $($current.Substring(0, 7)), main is $($latest.Substring(0, 7))). Run scripts\update-plugins.ps1 to update them."
+}
+
 $built = "$root\build\ninja-msvc-relwithdebinfo\Source\CDAW_artefacts\RelWithDebInfo"
 $dist = "$root\dist\CDAW"
 New-Item -ItemType Directory -Force $dist | Out-Null
@@ -18,84 +26,3 @@ Copy-Item "$built\CDAW.exe" $dist -Force
 if (Test-Path "$built\CDAW.pdb") { Copy-Item "$built\CDAW.pdb" $dist -Force }
 Copy-Item "$built\DrumMaps" $dist -Recurse -Force
 Write-Host "Published to $dist"
-
-# VST3 plugins (C-Verb, C-Multicomp, C-Comp, C-Delay, C-Chorus, C-Phaser, C-Filter, C-Dist, C-Esser, C-Synth and C-Lead): into dist\VST3, then installed in "Common Files\VST3\CDAW" where
-# Cubase and other hosts scan. That folder needs admin rights, so install-vst3.ps1 runs elevated (one UAC
-# prompt). If that is declined, a plugin never installed there goes to the per-user VST3 folder instead; one
-# with an older copy there is reported as not installed, because a second copy would show up twice in Cubase.
-# Exits with 1 if any plugin's system copy is not the build just published.
-# Rebuild first (incremental, quick when nothing changed) so the installed plugins never lag the shared code.
-# To add a plugin: add its CMake target, folder and bundle name here (and to Build-CDAW.bat).
-$plugins = @(
-    @{ Target = 'CVerb_VST3';      Folder = 'CVerb';      Artefacts = 'CVerb_artefacts';      Bundle = 'C-Verb.vst3' },
-    @{ Target = 'CMulticomp_VST3'; Folder = 'CMulticomp'; Artefacts = 'CMulticomp_artefacts'; Bundle = 'C-Multicomp.vst3' },
-    @{ Target = 'CComp_VST3';      Folder = 'CComp';      Artefacts = 'CComp_artefacts';      Bundle = 'C-Comp.vst3' },
-    @{ Target = 'CDelay_VST3';     Folder = 'CDelay';     Artefacts = 'CDelay_artefacts';     Bundle = 'C-Delay.vst3' },
-    @{ Target = 'CChorus_VST3';    Folder = 'CChorus';    Artefacts = 'CChorus_artefacts';    Bundle = 'C-Chorus.vst3' },
-    @{ Target = 'CPhaser_VST3';    Folder = 'CPhaser';    Artefacts = 'CPhaser_artefacts';    Bundle = 'C-Phaser.vst3' },
-    @{ Target = 'CFilter_VST3';    Folder = 'CFilter';    Artefacts = 'CFilter_artefacts';    Bundle = 'C-Filter.vst3' },
-    @{ Target = 'CDist_VST3';      Folder = 'CDist';      Artefacts = 'CDist_artefacts';      Bundle = 'C-Dist.vst3' },
-    @{ Target = 'CEsser_VST3';     Folder = 'CEsser';     Artefacts = 'CEsser_artefacts';     Bundle = 'C-Esser.vst3' },
-    @{ Target = 'CSynth_VST3';     Folder = 'CSynth';     Artefacts = 'CSynth_artefacts';     Bundle = 'C-Synth.vst3' },
-    @{ Target = 'CLead_VST3';      Folder = 'CLead';      Artefacts = 'CLead_artefacts';      Bundle = 'C-Lead.vst3' }
-)
-
-$distVst3 = "$root\dist\VST3"
-$systemDir = "$env:ProgramFiles\Common Files\VST3\CDAW"
-$userVst3 = "$env:LOCALAPPDATA\Programs\Common\VST3"
-$bundles = @()
-
-foreach ($plugin in $plugins) {
-    & "$PSScriptRoot\build.ps1" -Target $plugin.Target *> $null
-    if ($LASTEXITCODE -ne 0) { Write-Host "$($plugin.Bundle) build FAILED - not installing it"; exit 1 }
-
-    $vst3 = "$root\build\ninja-msvc-relwithdebinfo\cdaw-plugins\VST3\$($plugin.Folder)\$($plugin.Artefacts)\RelWithDebInfo\VST3\$($plugin.Bundle)"
-    if (-not (Test-Path $vst3)) { continue }
-
-    New-Item -ItemType Directory -Force $distVst3 | Out-Null
-    Remove-Item "$distVst3\$($plugin.Bundle)" -Recurse -Force -ErrorAction SilentlyContinue
-    Copy-Item $vst3 $distVst3 -Recurse -Force
-    Get-ChildItem "$distVst3\$($plugin.Bundle)" -Recurse -Include *.ilk | Remove-Item -Force
-    $bundles += $plugin.Bundle
-}
-
-if ($bundles.Count -gt 0) {
-    Write-Host "Published VST3 plugins to $distVst3"
-
-    $installer = "$PSScriptRoot\install-vst3.ps1"
-    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-
-    try {
-        if ($isAdmin) { & $installer -Source $distVst3 }
-        else {
-            $installerArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$installer`" -Source `"$distVst3`""
-            Start-Process powershell -ArgumentList $installerArgs -Verb RunAs -Wait -ErrorAction Stop
-        }
-    } catch { Write-Host "Elevated install did not run: $($_.Exception.Message)" }
-
-    $stale = 0
-    foreach ($bundle in $bundles) {
-        if (Test-Path "$systemDir\$bundle") {
-            if (-not (Test-SameBundle "$distVst3\$bundle" "$systemDir\$bundle")) {
-                Write-Host "NOT installed: $bundle in $systemDir is not this build"
-                $stale++
-                continue
-            }
-            Write-Host "Installed $bundle in $systemDir"
-            # The same plugin in two scanned folders would show up twice in Cubase.
-            Remove-Item "$userVst3\$bundle" -Recurse -Force -ErrorAction SilentlyContinue
-            Remove-Item "$userVst3\CDAW\$bundle" -Recurse -Force -ErrorAction SilentlyContinue
-        } else {
-            New-Item -ItemType Directory -Force "$userVst3\CDAW" | Out-Null
-            Remove-Item "$userVst3\CDAW\$bundle" -Recurse -Force -ErrorAction SilentlyContinue
-            Copy-Item "$distVst3\$bundle" "$userVst3\CDAW" -Recurse -Force
-            Remove-Item "$userVst3\$bundle" -Recurse -Force -ErrorAction SilentlyContinue
-            Write-Host "System folder not updated; installed $bundle for this user in $userVst3\CDAW"
-        }
-    }
-
-    if ($stale -gt 0) {
-        Write-Host "$stale plugin(s) not installed: hosts still load the older copies. Close Cubase and CDAW, run this again and approve the admin prompt."
-        exit 1
-    }
-}

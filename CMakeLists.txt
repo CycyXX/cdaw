@@ -39,7 +39,8 @@ add_subdirectory("${TE_DIR}" tracktion_engine EXCLUDE_FROM_ALL)
 include(cmake/CDAWModules.cmake)
 
 # The C- plugins live in their own repository, as a submodule. CDAW compiles their shared code into its
-# built-in effects (Source/CMakeLists.txt), and builds their VST3s using the JUCE Tracktion brings.
+# built-in effects (Source/CMakeLists.txt). It also builds their VST3s, using the JUCE Tracktion brings, because
+# its tests compare against them. It doesn't install them: cdaw-plugins does that, with its scripts\install.ps1.
 set(CDAW_PLUGINS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/cdaw-plugins")
 if(NOT EXISTS "${CDAW_PLUGINS_DIR}/CMakeLists.txt")
     message(FATAL_ERROR "The plugins are missing. Run scripts\\bootstrap.ps1 first.")
