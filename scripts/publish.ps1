@@ -1,12 +1,12 @@
 # Copies the CDAW build to dist\CDAW. The VST3s for Cubase and other hosts are installed from cdaw-plugins,
-# by its scripts\install.ps1.
+# by its Install-Plugins.bat.
 $root = Split-Path -Parent $PSScriptRoot
 $plugins = "$root\third_party\cdaw-plugins"
 
 # CDAW's built-in plugins are compiled from the submodule, so say so if that isn't the latest version.
 # Uncommitted changes there are refused: nothing could rebuild what was published.
 if (git -C $plugins status --porcelain --ignore-submodules) {
-    Write-Host "NOT published: third_party\cdaw-plugins has uncommitted changes. Commit them in cdaw-plugins, then run scripts\update-plugins.ps1."
+    Write-Host "NOT published: third_party\cdaw-plugins has uncommitted changes. Commit them in cdaw-plugins, then run Update-Plugins.bat."
     exit 1
 }
 
@@ -15,7 +15,7 @@ $latest = (git -C $plugins ls-remote origin refs/heads/main 2>$null) -split '\s+
 if (-not $latest) {
     Write-Host "WARNING: couldn't reach GitHub to check for a newer version of the plugins."
 } elseif ($current -ne $latest) {
-    Write-Host "WARNING: CDAW's plugins aren't the latest (built from $($current.Substring(0, 7)), main is $($latest.Substring(0, 7))). Run scripts\update-plugins.ps1 to update them."
+    Write-Host "WARNING: CDAW's plugins aren't the latest (built from $($current.Substring(0, 7)), main is $($latest.Substring(0, 7))). Run Update-Plugins.bat to update them."
 }
 
 $built = "$root\build\ninja-msvc-relwithdebinfo\Source\CDAW_artefacts\RelWithDebInfo"

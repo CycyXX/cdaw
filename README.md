@@ -330,11 +330,11 @@ folder.
 
 C-Verb, C-Multicomp, C-Comp, C-Esser, C-Delay, C-Chorus, C-Phaser, C-Filter, C-Dist, C-Synth and C-Lead also build as VST3s
 (`C-Verb.vst3`, `C-Multicomp.vst3`, `C-Comp.vst3`, `C-Esser.vst3`, `C-Delay.vst3`, `C-Chorus.vst3`, `C-Phaser.vst3`,
-`C-Filter.vst3`, `C-Dist.vst3`, `C-Synth.vst3`, `C-Lead.vst3`) for Cubase and other hosts. To install them, run
-`.\scripts\install.ps1` in [cdaw-plugins](https://github.com/CycyXX/cdaw-plugins). It puts them in
+`C-Filter.vst3`, `C-Dist.vst3`, `C-Synth.vst3`, `C-Lead.vst3`) for Cubase and other hosts. To install them, double-click
+`Install-Plugins.bat` in [cdaw-plugins](https://github.com/CycyXX/cdaw-plugins). It puts them in
 `C:\Program Files\Common Files\VST3\CDAW`, the folder hosts scan for VST3 plugins (Windows asks for
-administrator approval once; if you decline, it goes to `%LOCALAPPDATA%\Programs\Common\VST3\CDAW`
-instead). In Cubase, open Studio > VST Plug-in Manager and rescan (or restart Cubase); C-Verb appears
+administrator approval; if you decline, plugins that aren't there yet go to
+`%LOCALAPPDATA%\Programs\Common\VST3\CDAW` instead). In Cubase, open Studio > VST Plug-in Manager and rescan (or restart Cubase); C-Verb appears
 under Reverb, C-Multicomp, C-Comp and C-Esser under Dynamics, C-Delay under Delay, C-Chorus and C-Phaser under
 Modulation, C-Filter under Filter, C-Dist under Distortion, and C-Synth and C-Lead among the instruments (Synth). Close Cubase before installing, as it keeps loaded plugins
 locked. C-Comp's sidechain is the host's sidechain input: route a source to it in the host, then
@@ -343,7 +343,7 @@ host's tempo and position.
 
 The plugins live in [cdaw-plugins](https://github.com/CycyXX/cdaw-plugins), which CDAW has as a
 submodule in `third_party\cdaw-plugins`. To change one, commit and push there first, then commit the
-new submodule version here. `scripts\update-plugins.ps1` moves the submodule to the latest `main`, then rebuilds
+new submodule version here. `Update-Plugins.bat` (or `scripts\update-plugins.ps1`) moves the submodule to the latest `main`, then rebuilds
 and publishes CDAW, leaving the move staged for you to commit. `scripts\publish.ps1` warns if the submodule isn't the
 latest `main`, and refuses if it has uncommitted changes. CDAW still builds the VST3s because its tests compare
 against them, but it doesn't install them. Each plugin's CDAW build and VST3 compile the same code in that

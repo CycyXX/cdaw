@@ -26,6 +26,8 @@ function Enter-MsvcEnvironment {
         -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
     if (-not $vs) { throw "No Visual Studio with the C++ x64 tools found. Run scripts\setup-toolchain.ps1." }
 
+    # Visual Studio's own setup scripts call vswhere by name, and print an error if it isn't on PATH.
+    $env:Path = "$(Split-Path $vswhere);$env:Path"
     Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
     Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
 }
