@@ -40,10 +40,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Continue'
-          $files = gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --name-only
-          $listed = $LASTEXITCODE -eq 0 -and $files
+          # Both ends of a rename: moving a source file into docs/ is not a docs change.
+          $files = gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --paginate --jq '.[]|.filename,.previous_filename|select(.)'
+          # GitHub lists at most 3000 files, so a list that long may be incomplete.
+          $listed = $LASTEXITCODE -eq 0 -and $files -and @($files).Count -lt 3000
           $code = $files | Where-Object { $_ -notmatch '\.md$|^docs/|^\.github/ISSUE_TEMPLATE/|^\.github/pull_request_template' }
-          # If the list can't be read, build: only a known docs-only change skips.
+          # If the list can't be trusted, build: only a known docs-only change skips.
           $build = if ($listed -and -not $code) { 'false' } else { 'true' }
           Write-Host "Build needed: $build"
           "code=$build" | Out-File -Append -Encoding ascii $env:GITHUB_OUTPUT
@@ -80,6 +82,9 @@ jobs:
         if: steps.changes.outputs.code != 'false'
         shell: powershell
         timeout-minutes: 45
+        env:
+          # A stuck test fails after this long, and prints where it's stuck.
+          CDAW_TEST_HANG_SECONDS: "600"
         run: .\build\ci\Tests\CDAW_Tests_artefacts\Release\CDAW_Tests.exe
 
       - name: Show how much the cache saved
