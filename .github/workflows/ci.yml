@@ -1,0 +1,88 @@
+name: CI
+
+# Builds CDAW, its tests and the VST3s on Windows, and runs the tests.
+#
+# This has to stay one job that always reports, because the branch rule requires it: GitHub would wait
+# forever on a required check that never started. So a pull request that only changes docs still runs
+# the job, and the job's steps skip themselves.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to a pull request replaces the run it just made out of date.
+# Runs on main always finish: they fill the compiler cache that pull requests read.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  windows:
+    name: windows
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      # If the cache service has a problem, compile normally instead of failing the build.
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+
+    steps:
+      - name: See whether any code changed
+        id: changes
+        if: github.event_name == 'pull_request'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $files = gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --name-only
+          $listed = $LASTEXITCODE -eq 0 -and $files
+          $code = $files | Where-Object { $_ -notmatch '\.md$|^docs/|^\.github/ISSUE_TEMPLATE/|^\.github/pull_request_template' }
+          # If the list can't be read, build: only a known docs-only change skips.
+          $build = if ($listed -and -not $code) { 'false' } else { 'true' }
+          Write-Host "Build needed: $build"
+          "code=$build" | Out-File -Append -Encoding ascii $env:GITHUB_OUTPUT
+          exit 0
+
+      - name: Allow long paths in git
+        if: steps.changes.outputs.code != 'false'
+        run: git config --global core.longpaths true
+
+      - uses: actions/checkout@v7
+        if: steps.changes.outputs.code != 'false'
+
+      - name: Fetch Tracktion Engine, JUCE and the plugins
+        if: steps.changes.outputs.code != 'false'
+        shell: powershell
+        run: .\scripts\bootstrap.ps1
+
+      - name: Install Ninja
+        if: steps.changes.outputs.code != 'false'
+        run: choco install ninja --no-progress -y
+
+      - name: Set up the compiler cache
+        if: steps.changes.outputs.code != 'false'
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.19.0
+
+      - name: Build
+        if: steps.changes.outputs.code != 'false'
+        shell: powershell
+        run: .\scripts\build.ps1 -Preset ci
+
+      - name: Test
+        if: steps.changes.outputs.code != 'false'
+        shell: powershell
+        timeout-minutes: 45
+        run: .\build\ci\Tests\CDAW_Tests_artefacts\Release\CDAW_Tests.exe
+
+      - name: Show how much the cache saved
+        if: always() && steps.changes.outputs.code != 'false'
+        continue-on-error: true
+        run: sccache --show-stats
