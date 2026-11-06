@@ -39,6 +39,8 @@ source_group(TREE "${CDAW_PLUGINS_DIR}" PREFIX "Plugins" FILES ${CDAW_PLUGIN_SOU
 juce_add_gui_app(CDAW
     PRODUCT_NAME "CDAW"
     COMPANY_NAME "Cyrill Durrer"
+    # JUCE would make it from COMPANY_NAME, but a bundle ID can't have a space. Only macOS reads it.
+    BUNDLE_ID "com.CyrillDurrer.CDAW"
     VERSION ${PROJECT_VERSION}
     DOCUMENT_EXTENSIONS cdaw
     ICON_BIG "${CMAKE_SOURCE_DIR}/resources/logo/cdaw-logo-1024.png"
