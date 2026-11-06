@@ -10,6 +10,7 @@ namespace cdaw
     class ProjectSession;
     class InspectorPanel;
     class LowerZone;
+    namespace PluginUpdates { struct Status; }
 
     /** Root component: menu bar, transport, arrangement, status bar.
         Root ApplicationCommandTarget (commands are implemented in MainCommands.cpp). */
@@ -92,6 +93,10 @@ namespace cdaw
         void commitNotes();
         void showSaveFailed (const juce::File&);
         void openPluginFromFileDialog();
+        /** Plugins > Check for Plugin Updates: checks in the background, then reports or offers the update. */
+        void checkForPluginUpdates();
+        void showPluginUpdateStatus (const juce::File& sourceFolder, const PluginUpdates::Status&);
+        bool checkingPluginUpdates = false;
         void importAudioDialog();
         void importMidiDialog();
         void exportMidiDialog();
