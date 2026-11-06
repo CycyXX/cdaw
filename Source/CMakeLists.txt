@@ -19,6 +19,17 @@ juce_add_binary_data(cdaw_binary
 add_library(cdaw_lib STATIC ${CDAW_LIB_SOURCES} ${CDAW_PLUGIN_SOURCES})
 target_link_libraries(cdaw_lib PUBLIC cdaw_modules cdaw_binary)
 target_include_directories(cdaw_lib PUBLIC "${CDAW_PLUGINS_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
+
+# The plugins' commit this build compiles in (PluginsVersion.h), checked at every build because the
+# submodule can move without CMake noticing. The header only changes when the commit does.
+set(CDAW_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+add_custom_target(cdaw_plugins_version
+    COMMAND "${CMAKE_COMMAND}" "-DREPO=${CDAW_PLUGINS_DIR}" "-DOUT=${CDAW_GENERATED_DIR}/PluginsVersion.h"
+            -P "${CMAKE_SOURCE_DIR}/cmake/WritePluginsVersion.cmake"
+    BYPRODUCTS "${CDAW_GENERATED_DIR}/PluginsVersion.h"
+    VERBATIM)
+add_dependencies(cdaw_lib cdaw_plugins_version)
+target_include_directories(cdaw_lib PRIVATE "${CDAW_GENERATED_DIR}")
 target_precompile_headers(cdaw_lib PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/PCH.h")
 cdaw_apply_compile_options(cdaw_lib)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${CDAW_LIB_SOURCES})

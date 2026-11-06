@@ -1,34 +1,34 @@
 #include "PluginUpdates.h"
+#include "PluginsVersion.h"
+#include <thread>
 
 namespace cdaw::PluginUpdates
 {
     namespace
     {
         constexpr int maxListedChanges = 15;
+        constexpr int localTimeoutMs = 15000;
+        constexpr int networkTimeoutMs = 120000;
 
         juce::File submoduleOf (const juce::File& sourceFolder)
         {
             return sourceFolder.getChildFile ("third_party").getChildFile ("cdaw-plugins");
         }
 
-        struct GitResult
+        ProcessResult git (const juce::File& repo, const juce::StringArray& args, int timeoutMs = localTimeoutMs)
         {
-            bool ok = false;
-            juce::String output;   // stdout and stderr, trimmed
-        };
-
-        GitResult git (const juce::File& repo, const juce::StringArray& args)
-        {
-            juce::StringArray command { "git", "-C", repo.getFullPathName() };
+            // Nobody can answer a login prompt from here: fail instead of waiting for one.
+            juce::StringArray command { "git", "-c", "credential.interactive=never", "-C", repo.getFullPathName() };
             command.addArray (args);
 
-            juce::ChildProcess process;
-            if (! process.start (command, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr))
-                return { false, "git isn't installed, or isn't on PATH" };
+            auto result = run (command, timeoutMs);
 
-            auto output = process.readAllProcessOutput().trim();   // returns once git has ended its output
-            process.waitForProcessToFinish (10000);
-            return { process.getExitCode() == 0, output };
+            if (result.timedOut)
+                result.output = "git didn't finish within " + juce::String (timeoutMs / 1000) + " seconds.";
+            else if (! result.ok && result.output.isEmpty())
+                result.output = "git " + args[0] + " failed.";
+
+            return result;
         }
 
         Status failed (const juce::String& error)
@@ -38,6 +38,33 @@ namespace cdaw::PluginUpdates
             s.error = error;
             return s;
         }
+    }
+
+    ProcessResult run (const juce::StringArray& command, int timeoutMs)
+    {
+        juce::ChildProcess process;
+        if (! process.start (command, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr))
+            return { false, false, command[0] + " isn't installed, or isn't on PATH." };
+
+        // Reading the output blocks until the process ends, so a second thread enforces the deadline.
+        juce::WaitableEvent finished;
+        std::atomic<bool> timedOut { false };
+
+        std::thread watchdog ([&]
+        {
+            if (! finished.wait (timeoutMs))
+            {
+                timedOut = true;
+                process.kill();
+            }
+        });
+
+        auto output = process.readAllProcessOutput().trim();
+        finished.signal();
+        watchdog.join();
+        process.waitForProcessToFinish (5000);
+
+        return { ! timedOut && ! process.isRunning() && process.getExitCode() == 0, timedOut, output };
     }
 
     juce::File findSourceFolder (const juce::File& exe)
@@ -52,7 +79,12 @@ namespace cdaw::PluginUpdates
         }
     }
 
-    Status check (const juce::File& sourceFolder)
+    juce::String builtFrom()
+    {
+        return CDAW_PLUGINS_COMMIT;
+    }
+
+    Status check (const juce::File& sourceFolder, const juce::String& compiledFrom)
     {
         auto plugins = submoduleOf (sourceFolder);
         if (! plugins.getChildFile (".git").exists())
@@ -69,34 +101,49 @@ namespace cdaw::PluginUpdates
             return s;
         }
 
-        // A stalled connection gives up after 20 seconds instead of waiting forever.
+        // A stalled connection gives up after 20 seconds, well inside the deadline.
         auto fetched = git (plugins, { "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=20",
-                                       "fetch", "--quiet", "origin", "main" });
+                                       "fetch", "--quiet", "origin", "main" }, networkTimeoutMs);
         if (! fetched.ok)
             return failed ("Couldn't get the latest plugins from GitHub. " + fetched.output);
 
-        auto head = git (plugins, { "rev-parse", "HEAD" });
+        const auto base = compiledFrom.isNotEmpty() ? compiledFrom : juce::String ("HEAD");
+        auto current = git (plugins, { "rev-parse", "--verify", "--quiet", base + "^{commit}" });
         auto main = git (plugins, { "rev-parse", "FETCH_HEAD" });
-        if (! head.ok || ! main.ok)
-            return failed (head.ok ? main.output : head.output);
+        if (! main.ok)
+            return failed (main.output);
 
         Status s;
-        s.current = head.output.substring (0, 7);
         s.latest = main.output.substring (0, 7);
+        s.current = current.ok ? current.output.substring (0, 7) : base.substring (0, 7);
 
-        if (head.output == main.output)
+        if (current.ok && current.output == main.output)
         {
             s.state = Status::State::upToDate;
             return s;
         }
 
-        if (! git (plugins, { "merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD" }).ok)
+        auto onMain = [&] { return current.ok && git (plugins, { "merge-base", "--is-ancestor", current.output, "FETCH_HEAD" }).ok; };
+
+        // A shallow copy (as scripts\bootstrap.ps1 makes) can hold this CDAW's commit and main's as
+        // unconnected pieces of history, or not hold this CDAW's commit at all: fetch the rest once.
+        if (! onMain() && git (plugins, { "rev-parse", "--is-shallow-repository" }).output == "true")
+        {
+            auto deepened = git (plugins, { "fetch", "--quiet", "--unshallow", "origin", "main" }, networkTimeoutMs);
+            if (! deepened.ok)
+                return failed ("Couldn't get the plugins' history from GitHub. " + deepened.output);
+
+            current = git (plugins, { "rev-parse", "--verify", "--quiet", base + "^{commit}" });
+            main = git (plugins, { "rev-parse", "FETCH_HEAD" });
+        }
+
+        if (! onMain())
         {
             s.state = Status::State::notOnMain;
             return s;
         }
 
-        auto log = git (plugins, { "log", "--format=%s", "HEAD..FETCH_HEAD" });
+        auto log = git (plugins, { "log", "--format=%s", current.output + "..FETCH_HEAD" });
         if (! log.ok)
             return failed (log.output);
 
