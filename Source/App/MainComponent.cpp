@@ -892,7 +892,7 @@ namespace cdaw
         juce::Component::SafePointer<MainComponent> self (this);
         juce::Thread::launch ([self, source]
         {
-            auto status = PluginUpdates::check (source);
+            auto status = PluginUpdates::check (source, PluginUpdates::builtFrom());
 
             juce::MessageManager::callAsync ([self, source, status]
             {

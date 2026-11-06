@@ -10,25 +10,23 @@ namespace cdaw::test
 
         using State = PluginUpdates::Status::State;
 
-        static bool git (const juce::File& repo, const juce::StringArray& args)
+        static PluginUpdates::ProcessResult git (const juce::File& repo, const juce::StringArray& args)
         {
             juce::StringArray command { "git", "-c", "user.name=CDAW Tests", "-c", "user.email=tests@cdaw.invalid",
                                         "-c", "commit.gpgsign=false", "-C", repo.getFullPathName() };
             command.addArray (args);
-
-            juce::ChildProcess process;
-            if (! process.start (command, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr))
-                return false;
-
-            process.readAllProcessOutput();
-            process.waitForProcessToFinish (10000);
-            return process.getExitCode() == 0;
+            return PluginUpdates::run (command, 30000);
         }
 
         static bool commit (const juce::File& repo, const juce::String& file, const juce::String& subject)
         {
             repo.getChildFile (file).replaceWithText (subject);
-            return git (repo, { "add", file }) && git (repo, { "commit", "--quiet", "-m", subject });
+            return git (repo, { "add", file }).ok && git (repo, { "commit", "--quiet", "-m", subject }).ok;
+        }
+
+        static juce::String head (const juce::File& repo)
+        {
+            return git (repo, { "rev-parse", "HEAD" }).output;
         }
 
         /** git makes its object files read-only, which stops a plain delete on Windows. */
@@ -81,22 +79,42 @@ namespace cdaw::test
                 expect (remove (plugins));
             }
 
+           #if JUCE_WINDOWS
+            beginTest ("A command that doesn't finish in time is stopped");
+            {
+                auto started = juce::Time::getMillisecondCounter();
+                auto result = PluginUpdates::run ({ "cmd", "/c", "ping", "-n", "30", "127.0.0.1" }, 1000);
+
+                expect (result.timedOut);
+                expect (! result.ok);
+                expectLessThan ((int) (juce::Time::getMillisecondCounter() - started), 10000);
+            }
+           #endif
+
             auto github = root.getChildFile ("github-cdaw-plugins");
             github.createDirectory();
 
-            if (! git (github, { "init", "--quiet", "-b", "main" }))
+            if (! git (github, { "init", "--quiet", "-b", "main" }).ok)
             {
                 logMessage ("git isn't available: skipping the checks against repositories");
                 remove (root);
                 return;
             }
 
+            beginTest ("This build records the plugins' commit it was compiled with");
+            {
+                auto cdaw = PluginUpdates::findSourceFolder (juce::File::getSpecialLocation (juce::File::currentExecutableFile));
+                expect (cdaw != juce::File(), "the tests run from a build in CDAW's source folder");
+                expectEquals (PluginUpdates::builtFrom(), head (cdaw.getChildFile ("third_party/cdaw-plugins")));
+            }
+
             expect (commit (github, "Delay.cpp", "C-Delay: the first version"));
-            expect (git (source, { "clone", "--quiet", github.getFullPathName(), plugins.getFullPathName() }));
+            const auto first = head (github);
+            expect (git (source, { "clone", "--quiet", github.getFullPathName(), plugins.getFullPathName() }).ok);
 
             beginTest ("The same commit as main is up to date");
             {
-                auto status = PluginUpdates::check (source);
+                auto status = PluginUpdates::check (source, {});
                 expectState (status, State::upToDate);
                 expectEquals (status.current.length(), 7);
                 expectEquals (status.current, status.latest);
@@ -108,7 +126,7 @@ namespace cdaw::test
                 expect (commit (github, "Verb.cpp", "C-Verb: a darker room"));
 
                 auto before = plugins.getChildFile ("Delay.cpp").loadFileAsString();
-                auto status = PluginUpdates::check (source);
+                auto status = PluginUpdates::check (source, {});
 
                 expectState (status, State::newer);
                 expectEquals (status.changes.joinIntoString ("|"), juce::String ("C-Verb: a darker room|C-Delay: shorter echoes"));
@@ -117,12 +135,27 @@ namespace cdaw::test
                 expectEquals (plugins.getChildFile ("Delay.cpp").loadFileAsString(), before, "the files stay as they were");
             }
 
+            beginTest ("What counts is the commit CDAW was compiled with, not where its copy has moved since");
+            {
+                // Update-Plugins.bat moves the copy before building: if that build failed, the CDAW that's
+                // running is still the old one.
+                expect (git (plugins, { "checkout", "--quiet", "--detach", "FETCH_HEAD" }).ok);
+                expectState (PluginUpdates::check (source, {}), State::upToDate);
+
+                auto status = PluginUpdates::check (source, first);
+                expectState (status, State::newer);
+                expectEquals (status.current, first.substring (0, 7));
+                expectEquals (status.changes.size(), 2);
+
+                expect (git (plugins, { "checkout", "--quiet", "--detach", first }).ok);
+            }
+
             beginTest ("A long list stops at 15 and counts the rest");
             {
                 for (int i = 1; i <= 17; ++i)
                     expect (commit (github, "Filter.cpp", "C-Filter: step " + juce::String (i)));
 
-                auto status = PluginUpdates::check (source);
+                auto status = PluginUpdates::check (source, {});
                 expectState (status, State::newer);
                 expectEquals (status.changes.size(), 15);
                 expectEquals (status.changes[0], juce::String ("C-Filter: step 17"));
@@ -132,20 +165,40 @@ namespace cdaw::test
             beginTest ("Uncommitted changes in CDAW's copy are reported, not fetched over");
             {
                 plugins.getChildFile ("Delay.cpp").replaceWithText ("work in progress");
-                expectState (PluginUpdates::check (source), State::localChanges);
-                expect (git (plugins, { "checkout", "--quiet", "--", "Delay.cpp" }));
+                expectState (PluginUpdates::check (source, {}), State::localChanges);
+                expect (git (plugins, { "checkout", "--quiet", "--", "Delay.cpp" }).ok);
             }
 
             beginTest ("A commit that main doesn't contain, as on a branch, isn't called older or newer");
             {
                 expect (commit (plugins, "Phaser.cpp", "C-Phaser: an experiment"));
-                expectState (PluginUpdates::check (source), State::notOnMain);
+                expectState (PluginUpdates::check (source, {}), State::notOnMain);
+            }
+
+            beginTest ("A shallow copy whose commit isn't connected to main's history still finds the update");
+            {
+                // As scripts\bootstrap.ps1 leaves it: CDAW's commit and main's, each without its history.
+                expect (remove (plugins));
+                expect (git (github, { "config", "uploadpack.allowAnySHA1InWant", "true" }).ok);
+
+                auto url = "file:///" + github.getFullPathName().replaceCharacter ('\\', '/');
+                expect (git (source, { "clone", "--quiet", "--depth", "1", url, plugins.getFullPathName() }).ok);
+                expect (git (plugins, { "fetch", "--quiet", "--depth", "1", "origin", first }).ok);
+                expect (git (plugins, { "checkout", "--quiet", "--detach", first }).ok);
+                expectEquals (git (plugins, { "rev-parse", "--is-shallow-repository" }).output, juce::String ("true"));
+
+                expect (commit (github, "Chorus.cpp", "C-Chorus: wider"));
+
+                auto status = PluginUpdates::check (source, {});
+                expectState (status, State::newer);
+                expectEquals (status.changes[0], juce::String ("C-Chorus: wider"));
+                expectEquals (status.changes.size() + status.moreChanges, 20);
             }
 
             beginTest ("Without GitHub, the check fails and says so");
             {
                 expect (remove (github));
-                auto status = PluginUpdates::check (source);
+                auto status = PluginUpdates::check (source, {});
                 expectState (status, State::failed);
                 expect (status.error.startsWith ("Couldn't get the latest plugins"), status.error);
             }
@@ -153,7 +206,7 @@ namespace cdaw::test
             beginTest ("Without CDAW's copy of the plugins, the check fails and says so");
             {
                 expect (remove (plugins));
-                auto status = PluginUpdates::check (source);
+                auto status = PluginUpdates::check (source, {});
                 expectState (status, State::failed);
                 expect (status.error.contains ("bootstrap"), status.error);
             }
