@@ -131,6 +131,7 @@ namespace cdaw
             scanPlugins = 0x26000,
             showPluginManager,
             openPluginFromFile,
+            checkPluginUpdates,
 
             // Tools
             toolSelect = 0x27000,

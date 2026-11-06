@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "AppContext.h"
+#include "PluginUpdates.h"
 #include "../Commands/CommandIDs.h"
 #include "../Engine/AudioDeviceSetup.h"
 #include "../Model/ClipOps.h"
@@ -869,6 +870,122 @@ namespace cdaw
         });
     }
 
+    void MainComponent::checkForPluginUpdates()
+    {
+        auto source = PluginUpdates::findSourceFolder (juce::File::getSpecialLocation (juce::File::currentExecutableFile));
+
+        if (source == juce::File())
+        {
+            juce::AlertWindow::showAsync (juce::MessageBoxOptions::makeOptionsOk (juce::MessageBoxIconType::InfoIcon,
+                "Check for Plugin Updates",
+                "This copy of CDAW isn't in a CDAW source folder, so it can't rebuild itself with newer plugins. "
+                "The plugins are built into CDAW, so they're updated with CDAW itself.", "OK", this), nullptr);
+            return;
+        }
+
+        if (checkingPluginUpdates)
+            return;
+
+        checkingPluginUpdates = true;
+        statusBar->showMessage ("Checking for plugin updates...");
+
+        juce::Component::SafePointer<MainComponent> self (this);
+        juce::Thread::launch ([self, source]
+        {
+            auto status = PluginUpdates::check (source);
+
+            juce::MessageManager::callAsync ([self, source, status]
+            {
+                if (self != nullptr)
+                    self->showPluginUpdateStatus (source, status);
+            });
+        });
+    }
+
+    void MainComponent::showPluginUpdateStatus (const juce::File& source, const PluginUpdates::Status& status)
+    {
+        using State = PluginUpdates::Status::State;
+        checkingPluginUpdates = false;
+        statusBar->showMessage ({});
+
+        const juce::String title ("Check for Plugin Updates");
+        auto tell = [this, &title] (juce::MessageBoxIconType icon, const juce::String& message)
+        {
+            juce::AlertWindow::showAsync (juce::MessageBoxOptions::makeOptionsOk (icon, title, message, "OK", this), nullptr);
+        };
+
+        juce::String message;
+
+        switch (status.state)
+        {
+            case State::upToDate:
+                tell (juce::MessageBoxIconType::InfoIcon, "CDAW's plugins are the latest version (" + status.current + ").");
+                return;
+
+            case State::localChanges:
+                tell (juce::MessageBoxIconType::InfoIcon,
+                      "third_party\\cdaw-plugins has uncommitted changes, which an update would mix up with the new version. "
+                      "Commit them in cdaw-plugins, or discard them, then check again.");
+                return;
+
+            case State::failed:
+                tell (juce::MessageBoxIconType::WarningIcon, "Couldn't check for plugin updates.\n\n" + status.error);
+                return;
+
+            case State::notOnMain:
+                message << "CDAW's plugins are at " << status.current << ", which isn't on cdaw-plugins' main, "
+                        << "such as a branch you're trying out. Updating replaces them with main (" << status.latest << ").";
+                break;
+
+            case State::newer:
+            {
+                const int count = status.changes.size() + status.moreChanges;
+                message << "cdaw-plugins has " << count << (count == 1 ? " change" : " changes")
+                        << " that this CDAW doesn't have yet:\n\n";
+
+                for (auto& change : status.changes)
+                    message << juce::String::fromUTF8 ("\xe2\x80\xa2 ") << change << "\n";
+
+                if (status.moreChanges > 0)
+                    message << "and " << status.moreChanges << " more\n";
+                break;
+            }
+        }
+
+        message << "\nUpdate and Restart closes CDAW, rebuilds it with the new plugins in a console window "
+                   "(usually a few minutes) and starts it again. The new plugin version is left staged in CDAW's git, "
+                   "to commit like your other changes.\n\n"
+                   "The VST3s in Cubase aren't changed: update those with Install-Plugins.bat in cdaw-plugins.";
+
+        juce::Component::SafePointer<MainComponent> self (this);
+        auto options = juce::MessageBoxOptions::makeOptionsOkCancel (juce::MessageBoxIconType::QuestionIcon, title, message,
+                                                                    "Update and Restart", "Later", this);
+
+        juce::AlertWindow::showAsync (options, [self, source] (int result)
+        {
+            if (result != 1 || self == nullptr)
+                return;
+
+            self->confirmDiscardOrSave ([self, source] (bool ok)
+            {
+                if (! ok)
+                    return;
+
+                if (PluginUpdates::startUpdate (source))
+                {
+                    juce::JUCEApplication::quit();
+                    return;
+                }
+
+                if (self != nullptr)
+                    juce::AlertWindow::showAsync (juce::MessageBoxOptions::makeOptionsOk (juce::MessageBoxIconType::WarningIcon,
+                        "Check for Plugin Updates",
+                        "Couldn't start Update-Plugins.bat in " + source.getFullPathName() + ". CDAW stays open.",
+                        "OK", self.getComponent()), nullptr);
+            });
+        });
+    }
+
     void MainComponent::openPluginFromFileDialog()
     {
         if (getSession() == nullptr)
@@ -1105,7 +1222,7 @@ namespace cdaw
         }
         else if (index == 5)
         {
-            add ({ CommandIDs::showPluginManager, 0, CommandIDs::openPluginFromFile });
+            add ({ CommandIDs::showPluginManager, 0, CommandIDs::openPluginFromFile, 0, CommandIDs::checkPluginUpdates });
         }
 
         return m;

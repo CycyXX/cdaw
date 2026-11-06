@@ -58,7 +58,7 @@ namespace cdaw
             CommandIDs::toolSelect, CommandIDs::toolRange, CommandIDs::toolSplit,
             CommandIDs::toolDraw, CommandIDs::toolErase, CommandIDs::toolMute,
 
-            CommandIDs::openPluginFromFile, CommandIDs::showPluginManager, CommandIDs::toggleInspector,
+            CommandIDs::openPluginFromFile, CommandIDs::showPluginManager, CommandIDs::checkPluginUpdates, CommandIDs::toggleInspector,
             CommandIDs::toggleEditor, CommandIDs::toggleMixer, CommandIDs::toggleAutomation,
             CommandIDs::toggleArranger, CommandIDs::toggleSpectrum, CommandIDs::toggleNotes
         };
@@ -301,6 +301,7 @@ namespace cdaw
             // Plugins
             case CommandIDs::showPluginManager: set ("Plugin Manager...", "Scan for plugins and manage the plugin list", CommandCategories::plugins); break;
             case CommandIDs::openPluginFromFile: set ("Open Plugin From File...", "Load a VST3 directly onto the selected track", CommandCategories::plugins, hasSession); break;
+            case CommandIDs::checkPluginUpdates: set ("Check for Plugin Updates...", "See whether cdaw-plugins has changes this CDAW doesn't have yet, and update to them", CommandCategories::plugins); break;
 
             default: break;
         }
@@ -388,6 +389,7 @@ namespace cdaw
                 return true;
             case CommandIDs::showPreferences:   PreferencesDialog::show (0); return true;
             case CommandIDs::showPluginManager: PluginMenus::showPluginManager (ctx.engine()); return true;
+            case CommandIDs::checkPluginUpdates: checkForPluginUpdates(); return true;
             case juce::StandardApplicationCommandIDs::quit:
                 juce::JUCEApplication::getInstance()->systemRequestedQuit();
                 return true;

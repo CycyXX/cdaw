@@ -344,7 +344,9 @@ host's tempo and position.
 The plugins live in [cdaw-plugins](https://github.com/CycyXX/cdaw-plugins), which CDAW has as a
 submodule in `third_party\cdaw-plugins`. To change one, commit and push there first, then commit the
 new submodule version here. `Update-Plugins.bat` (or `scripts\update-plugins.ps1`) moves the submodule to the latest `main`, then rebuilds
-and publishes CDAW, leaving the move staged for you to commit. `scripts\publish.ps1` warns if the submodule isn't the
+and publishes CDAW, leaving the move staged for you to commit. In CDAW, Plugins > Check for Plugin Updates lists what's
+new on `main` and can do the same for you: it closes CDAW, runs `Update-Plugins.bat` and starts CDAW again. A copy of CDAW
+that isn't in its source folder can't rebuild itself, and says so. `scripts\publish.ps1` warns if the submodule isn't the
 latest `main`, and refuses if it has uncommitted changes. CDAW still builds the VST3s because its tests compare
 against them, but it doesn't install them. Each plugin's CDAW build and VST3 compile the same code in that
 repository's `Shared` folder, so a change there applies to both once CDAW's submodule has moved. The DSP, parameters,
